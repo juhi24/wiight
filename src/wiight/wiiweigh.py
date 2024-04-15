@@ -10,10 +10,11 @@ import fnmatch
 import os
 from functools import partial
 
-import bluezutils
+from wiight.bluezutils import find_adapter, find_device
 
 import dbus
 import dbus.mainloop.glib
+import click
 try:
   from gi.repository import GObject
 except ImportError:
@@ -116,7 +117,7 @@ def average_mesurements(ms, max_stddev=30):
 		counter = counter + 1
 
 def find_device_address(bus):
-	adapter = bluezutils.find_adapter()
+	adapter = find_adapter()
 	adapter_path = adapter.object_path
 
 	om = dbus.Interface(bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
@@ -155,7 +156,7 @@ def connect_balanceboard(bus):
 	if bbaddress is None:
 		bbaddress = find_device_address(bus)
 	if bbaddress is not None:
-		device = bluezutils.find_device(bbaddress)
+		device = find_device(bbaddress)
 		device.Disconnect()
 
 def property_changed(interface, changed, invalidated, path, bus=None):
@@ -168,6 +169,7 @@ def property_changed(interface, changed, invalidated, path, bus=None):
 			connect_balanceboard(bus)
 
 
+@click.command()
 def main():
 	dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
 

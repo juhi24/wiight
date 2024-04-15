@@ -24,12 +24,18 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
-dependencies = []
+dependencies = [
+  "numpy",
+  "click",
+]
 
 [project.urls]
 Documentation = "https://github.com/juhi24/wiight#readme"
 Issues = "https://github.com/juhi24/wiight/issues"
 Source = "https://github.com/juhi24/wiight"
+
+[project.scripts]
+wiight = "wiight.wiiweigh:main"
 
 [tool.hatch.version]
 source = "vcs"
