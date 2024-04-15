@@ -8,6 +8,7 @@ import numpy
 import xwiimote
 import fnmatch
 import os
+from functools import partial
 
 import bluezutils
 
@@ -114,7 +115,7 @@ def average_mesurements(ms, max_stddev=30):
 			return numpy.array((0, 0))
 		counter = counter + 1
 
-def find_device_address():
+def find_device_address(bus):
 	adapter = bluezutils.find_adapter()
 	adapter_path = adapter.object_path
 
@@ -133,7 +134,7 @@ def find_device_address():
 		print ("found Wii Balanceboard with address %s" % (properties["Address"]))
 		return properties["Address"]
 
-def connect_balanceboard():
+def connect_balanceboard(bus):
 	global bbaddress
 	#device is something like "/sys/devices/platform/soc/3f201000.uart/tty/ttyAMA0/hci0/hci0:11/0005:057E:0306.000C"
 	device = wait_for_balanceboard()
@@ -152,27 +153,28 @@ def connect_balanceboard():
 
 	# find address of the balance board (once) and disconnect (if found).
 	if bbaddress is None:
-		bbaddress = find_device_address()
+		bbaddress = find_device_address(bus)
 	if bbaddress is not None:
 		device = bluezutils.find_device(bbaddress)
 		device.Disconnect()
 
-def property_changed(interface, changed, invalidated, path):
+def property_changed(interface, changed, invalidated, path, bus=None):
 	iface = interface[interface.rfind(".") + 1:]
 	for name, value in changed.items():
 		val = str(value)
 		print("{%s.PropertyChanged} [%s] %s = %s" % (iface, path, name, val))
 		# check if property "Connected" changed to "1". Does NOT check which device has connected, we only assume it was the balance board
 		if name == "Connected" and val == "1":
-			connect_balanceboard()
+			connect_balanceboard(bus)
 
-if __name__ == '__main__':
+
+def main():
 	dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
 
 	bus = dbus.SystemBus()
 
 	# bluetooth (dis)connection triggers PropertiesChanged signal
-	bus.add_signal_receiver(property_changed, bus_name="org.bluez",
+	bus.add_signal_receiver(partial(property_changed, bus=bus), bus_name="org.bluez",
 			dbus_interface="org.freedesktop.DBus.Properties",
 			signal_name="PropertiesChanged",
 			path_keyword="path")
@@ -181,3 +183,7 @@ if __name__ == '__main__':
 		mainloop.run()
 	except KeyboardInterrupt:
 		print("Bye!")
+
+
+if __name__ == '__main__':
+    main()
