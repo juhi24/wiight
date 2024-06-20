@@ -4,7 +4,7 @@
 import sys
 import time
 import select
-import numpy
+import numpy as np
 import xwiimote
 import fnmatch
 import os
@@ -20,12 +20,22 @@ try:
   from gi.repository import GObject
 except ImportError:
   import gobject as GObject
+import logging
 
 relevant_ifaces = [ "org.bluez.Adapter1", "org.bluez.Device1" ]
 bbaddress = None
 
+# Configure logger
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-#from https://github.com/irq0/wiiscale/blob/master/scale.py
+# Create logger
+logger = logging.getLogger(__name__)
+
+# Log a message
+logger.info('Logging initialized')
+
+
+# from https://github.com/irq0/wiiscale/blob/master/scale.py
 class RingBuffer():
     def __init__(self, length):
         self.length = length
@@ -33,7 +43,7 @@ class RingBuffer():
         self.filled = False
 
     def extend(self, x):
-        x_index = (self.index + numpy.arange(x.size)) % self.data.size
+        x_index = (self.index + np.arange(x.size)) % self.data.size
         self.data[x_index] = x
         self.index = x_index[-1] + 1
         if self.filled == False and self.index == (self.length-1):
@@ -47,11 +57,11 @@ class RingBuffer():
             self.filled = True
 
     def get(self):
-        idx = (self.index + numpy.arange(self.data.size)) %self.data.size
+        idx = (self.index + np.arange(self.data.size)) %self.data.size
         return self.data[idx]
 
     def reset(self):
-        self.data = numpy.zeros(self.length, dtype=int)
+        self.data = np.zeros(self.length, dtype=int)
         self.index = 0
 
 
@@ -93,25 +103,22 @@ def measurements(iface):
         yield (tl,tr,br,bl)
             
 
-def average_measurements(ms, window_size=600, weight_threshold=50):
-    last_measurements = []
+def average_measurements(ms, window_size=800, max_stddev=10, min_weight=10, 
+                        max_measurements=5000):
+    last_measurements = RingBuffer(window_size)
     counter = 0
     while True:
         weight = sum(next(ms))
-        if weight < weight_threshold:
-            continue
-        if len(last_measurements) >= window_size:
-            last_measurements.pop(bisect.bisect_left(last_measurements, -counter))
-        bisect.insort(last_measurements, weight)
-        counter = (counter + 1) % window_size
-        if len(last_measurements) == window_size:
-            median = last_measurements[window_size // 2]
-            if window_size % 2 == 0:
-                median = (last_measurements[window_size // 2 - 1] + median) / 2
-            stddev = numpy.std(last_measurements)
-            return numpy.array((median, stddev))
+        last_measurements.append(weight)
+        median = np.median(last_measurements.data)
+        stddev = np.std(last_measurements.data)
+        if stddev < max_stddev and last_measurements.filled and median > min_weight:
+            return np.array((median, stddev))
+        if counter > max_measurements:
+            return np.array((0, 0))
+        counter = counter + 1
 
-
+    
 def find_device_address(bus):
     adapter = find_adapter()
     adapter_path = adapter.object_path
@@ -126,7 +133,7 @@ def find_device_address(bus):
             continue
         if properties["Alias"] != "Nintendo RVL-WBC-01":
             continue
-        print ("found Wii Balanceboard with address %s" % (properties["Address"]))
+        logger.info("found Wii Balanceboard with address %s" % (properties["Address"]))
         return properties["Address"]
 
 
@@ -152,7 +159,7 @@ def property_changed(interface, changed, invalidated, path, bus=None):
     iface = interface[interface.rfind(".") + 1:]
     for name, value in changed.items():
         val = str(value)
-        print("{%s.PropertyChanged} [%s] %s = %s" % (iface, path, name, val))
+        logger.info("{%s.PropertyChanged} [%s] %s = %s" % (iface, path, name, val))
         # check if property "Connected" changed to "1". Does NOT check which device has connected, we only assume it was the balance board
         if name == "Connected" and val == "1":
             connect_balanceboard(bus)
@@ -160,14 +167,17 @@ def property_changed(interface, changed, invalidated, path, bus=None):
 
 @click.command()
 def main():
+    logger.debug("Starting")
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
     # bluetooth (dis)connection triggers PropertiesChanged signal
+    logger.debug("Adding signal receiver")
     bus.add_signal_receiver(partial(property_changed, bus=bus), bus_name="org.bluez",
             dbus_interface="org.freedesktop.DBus.Properties",
             signal_name="PropertiesChanged",
             path_keyword="path")
     try:
+        logger.debug("Running mainloop")
         mainloop = GObject.MainLoop()
         mainloop.run()
     except KeyboardInterrupt:
