@@ -90,18 +90,38 @@ def wait_for_balanceboard():
     return dev
 
 
-def measurements(iface):
+def measurements(iface, calibration=(0,0,0,0)):
     p = select.epoll.fromfd(iface.get_fd())
     while True:
         p.poll() # blocks
         event = xwiimote.event()
         iface.dispatch(event)
-        tl = event.get_abs(2)[0]
-        tr = event.get_abs(0)[0]
-        br = event.get_abs(3)[0]
-        bl = event.get_abs(1)[0]
+        tl = event.get_abs(2)[0] - calibration[0]
+        tr = event.get_abs(0)[0] - calibration[2]
+        br = event.get_abs(3)[0] - calibration[1]
+        bl = event.get_abs(1)[0] - calibration[3]
+        logging.debug(sum((tl,tr,br,bl)))
         yield (tl,tr,br,bl)
             
+
+def calibrate(iface):
+    """Calibrate empty balance board"""
+    print("Calibrating balanceboard..")
+    calibration = [0,0,0,0]
+    for i in range(10):
+        p = select.epoll.fromfd(iface.get_fd())
+        while True:
+            p.poll() # blocks
+            event = xwiimote.event()
+            iface.dispatch(event)
+            calibration[0] += event.get_abs(2)[0]
+            calibration[1] += event.get_abs(3)[0]
+            calibration[2] += event.get_abs(0)[0]
+            calibration[3] += event.get_abs(1)[0]
+        calibration = [x/10 for x in calibration]
+    print("Calibration done.")
+    return calibration
+
 
 def average_measurements(ms, window_size=800, max_stddev=10, min_weight=10, 
                         max_measurements=5000):
@@ -143,10 +163,11 @@ def connect_balanceboard(bus):
     device = wait_for_balanceboard()
     iface = xwiimote.iface(device)
     iface.open(xwiimote.IFACE_BALANCE_BOARD)
-    (kg, err) = average_measurements(measurements(iface))
+    calibration = calibrate(iface)
+    (kg, std) = average_measurements(measurements(iface), calibration=calibration)
     # do something with this data
     # like log to file or send to server
-    print("{:.2f} +/- {:.2f}".format(kg/100.0, err/100.0))
+    print("{:.2f} +/- {:.2f}".format(kg/100.0, std/100.0))
     # find address of the balance board (once) and disconnect (if found).
     if bbaddress is None:
         bbaddress = find_device_address(bus)
