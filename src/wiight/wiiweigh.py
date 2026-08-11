@@ -1,42 +1,31 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-
-import sys
-import time
+import importlib
+import logging
 import select
-import numpy as np
-import xwiimote
-import fnmatch
-import os
-import bisect
+import time
 from functools import partial
 
-from wiight.bluezutils import find_adapter, find_device
-
-import dbus
-import dbus.mainloop.glib
 import click
-try:
-  from gi.repository import GObject
-except ImportError:
-  import gobject as GObject
-import logging
+import numpy as np
 
-relevant_ifaces = [ "org.bluez.Adapter1", "org.bluez.Device1" ]
+from wiight.bluezutils import find_adapter, find_device
+from wiight.measurement import (
+    CornerReading,
+    SensorSample,
+    centikilograms_to_kilograms,
+    compute_tare,
+)
+
 bbaddress = None
 
-# Configure logger
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Create logger
 logger = logging.getLogger(__name__)
 
-# Log a message
-logger.info('Logging initialized')
+
+def _xwiimote_module():
+    return importlib.import_module("xwiimote")
 
 
 # from https://github.com/irq0/wiiscale/blob/master/scale.py
-class RingBuffer():
+class RingBuffer:
     def __init__(self, length):
         self.length = length
         self.reset()
@@ -67,11 +56,13 @@ class RingBuffer():
 
 def dev_is_balanceboard(dev):
     time.sleep(2) # if we check the devtype to early it is reported as 'unknown' :(
+    xwiimote = _xwiimote_module()
     iface = xwiimote.iface(dev)
     return iface.get_devtype() == 'balanceboard'
 
 
 def wait_for_balanceboard():
+    xwiimote = _xwiimote_module()
     print("Waiting for balanceboard to connect..")
     mon = xwiimote.monitor(True, False)
     dev = None
@@ -90,37 +81,42 @@ def wait_for_balanceboard():
     return dev
 
 
+def corner_reading_from_event(event) -> CornerReading:
+    return CornerReading(
+        top_left=event.get_abs(2)[0],
+        top_right=event.get_abs(0)[0],
+        bottom_right=event.get_abs(1)[0],
+        bottom_left=event.get_abs(3)[0],
+    )
+
+
 def measurements(iface, calibration=(0,0,0,0)):
-    p = select.epoll.fromfd(iface.get_fd())
+    xwiimote = _xwiimote_module()
+    offsets = CornerReading(*calibration)
+    poller = select.poll()
+    poller.register(iface.get_fd(), select.POLLIN)
     while True:
-        p.poll() # blocks
+        poller.poll() # blocks
         event = xwiimote.event()
         iface.dispatch(event)
-        tl = event.get_abs(2)[0] - calibration[0]
-        tr = event.get_abs(0)[0] - calibration[2]
-        br = event.get_abs(3)[0] - calibration[1]
-        bl = event.get_abs(1)[0] - calibration[3]
-        logging.debug(sum((tl,tr,br,bl)))
-        yield (tl,tr,br,bl)
+        if event.type != xwiimote.EVENT_BALANCE_BOARD:
+            continue
+        reading = corner_reading_from_event(event).subtract(offsets)
+        logger.debug(reading.total)
+        yield tuple(reading)
             
 
 def calibrate(iface):
     """Calibrate empty balance board"""
     print("Calibrating balanceboard..")
-    calibration = [0,0,0,0]
-    for i in range(10):
-        p = select.epoll.fromfd(iface.get_fd())
-        while True:
-            p.poll() # blocks
-            event = xwiimote.event()
-            iface.dispatch(event)
-            calibration[0] += event.get_abs(2)[0]
-            calibration[1] += event.get_abs(3)[0]
-            calibration[2] += event.get_abs(0)[0]
-            calibration[3] += event.get_abs(1)[0]
-        calibration = [x/10 for x in calibration]
+    readings = measurements(iface)
+    samples = [
+        SensorSample(time.monotonic(), CornerReading(*next(readings)))
+        for _ in range(10)
+    ]
+    calibration = compute_tare(samples)
     print("Calibration done.")
-    return calibration
+    return tuple(calibration.offsets)
 
 
 def average_measurements(ms, window_size=800, max_stddev=10, min_weight=10, 
@@ -140,12 +136,14 @@ def average_measurements(ms, window_size=800, max_stddev=10, min_weight=10,
 
     
 def find_device_address(bus):
-    adapter = find_adapter()
+    dbus = importlib.import_module("dbus")
+
+    adapter = find_adapter(bus=bus)
     adapter_path = adapter.object_path
     om = dbus.Interface(bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
     objects = om.GetManagedObjects()
     # find FIRST registered or connected Wii Balance Board ("RVL-WBC-01") and return address
-    for path, interfaces in objects.items():
+    for interfaces in objects.values():
         if "org.bluez.Device1" not in interfaces:
             continue
         properties = interfaces["org.bluez.Device1"]
@@ -153,26 +151,30 @@ def find_device_address(bus):
             continue
         if properties["Alias"] != "Nintendo RVL-WBC-01":
             continue
-        logger.info("found Wii Balanceboard with address %s" % (properties["Address"]))
+        logger.info("found Wii Balanceboard with address %s", properties["Address"])
         return properties["Address"]
 
 
 def connect_balanceboard(bus):
     global bbaddress
+    xwiimote = _xwiimote_module()
     #device is something like "/sys/devices/platform/soc/3f201000.uart/tty/ttyAMA0/hci0/hci0:11/0005:057E:0306.000C"
     device = wait_for_balanceboard()
     iface = xwiimote.iface(device)
     iface.open(xwiimote.IFACE_BALANCE_BOARD)
     calibration = calibrate(iface)
-    (kg, std) = average_measurements(measurements(iface), calibration=calibration)
+    (kg, std) = average_measurements(measurements(iface, calibration))
     # do something with this data
     # like log to file or send to server
-    print("{:.2f} +/- {:.2f}".format(kg/100.0, std/100.0))
+    print(
+        f"{centikilograms_to_kilograms(kg):.2f} +/- "
+        f"{centikilograms_to_kilograms(std):.2f}"
+    )
     # find address of the balance board (once) and disconnect (if found).
     if bbaddress is None:
         bbaddress = find_device_address(bus)
     if bbaddress is not None:
-        device = find_device(bbaddress)
+        device = find_device(bbaddress, bus=bus)
         device.Disconnect()
 
 
@@ -180,7 +182,7 @@ def property_changed(interface, changed, invalidated, path, bus=None):
     iface = interface[interface.rfind(".") + 1:]
     for name, value in changed.items():
         val = str(value)
-        logger.info("{%s.PropertyChanged} [%s] %s = %s" % (iface, path, name, val))
+        logger.info("{%s.PropertyChanged} [%s] %s = %s", iface, path, name, val)
         # check if property "Connected" changed to "1". Does NOT check which device has connected, we only assume it was the balance board
         if name == "Connected" and val == "1":
             connect_balanceboard(bus)
@@ -188,8 +190,20 @@ def property_changed(interface, changed, invalidated, path, bus=None):
 
 @click.command()
 def main():
+    dbus = importlib.import_module("dbus")
+    dbus_glib = importlib.import_module("dbus.mainloop.glib")
+
+    try:
+        GObject = importlib.import_module("gi.repository").GObject
+    except ImportError:
+        GObject = importlib.import_module("gobject")
+
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
     logger.debug("Starting")
-    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    dbus_glib.DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
     # bluetooth (dis)connection triggers PropertiesChanged signal
     logger.debug("Adding signal receiver")
