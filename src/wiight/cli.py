@@ -190,8 +190,12 @@ def measure(
     continuous: bool,
     json_output: bool,
 ) -> None:
-    """Measure stable weight using the persisted tare calibration."""
-    from wiight.calibration import CalibrationStoreError, load_calibration
+    """Measure stable weight, using persisted tare when available."""
+    from wiight.calibration import (
+        CalibrationStoreError,
+        load_optional_calibration,
+        zero_calibration,
+    )
     from wiight.config import ConfigError, load_config
     from wiight.hardware import (
         BalanceBoardError,
@@ -222,7 +226,10 @@ def measure(
 
     try:
         config = load_config(config_path)
-        stored = load_calibration(config.calibration.path, config.board.address)
+        stored = load_optional_calibration(
+            config.calibration.path, config.board.address
+        )
+        calibration = stored.calibration if stored is not None else zero_calibration()
         device_path = device or find_configured_balance_board_path(
             config.board.address, config.board.adapter
         )
@@ -235,7 +242,7 @@ def measure(
                     emitted = False
                     for measurement in stable_measurements(
                         events,
-                        stored.calibration,
+                        calibration,
                         config.measurement,
                     ):
                         emit(measurement)
@@ -248,7 +255,7 @@ def measure(
                     emit(
                         measure_once(
                             events,
-                            stored.calibration,
+                            calibration,
                             config.measurement,
                         )
                     )
@@ -268,20 +275,26 @@ def measure(
 )
 def daemon(config_path: Path) -> None:
     """Run the foreground MQTT smart-scale service."""
-    from wiight.calibration import CalibrationStoreError, load_calibration
+    from wiight.calibration import CalibrationStoreError, load_optional_calibration
     from wiight.config import ConfigError, load_config
     from wiight.daemon import DaemonService
     from wiight.mqtt import MqttError, MqttPublisher
 
     try:
         config = load_config(config_path)
-        stored = load_calibration(config.calibration.path, config.board.address)
+        stored = load_optional_calibration(
+            config.calibration.path, config.board.address
+        )
         publisher = MqttPublisher(
             config.mqtt,
             username=os.environ.get("WIIGHT_MQTT_USERNAME"),
             password=os.environ.get("WIIGHT_MQTT_PASSWORD"),
         )
-        service = DaemonService(config, stored.calibration, publisher)
+        service = DaemonService(
+            config,
+            stored.calibration if stored is not None else None,
+            publisher,
+        )
     except (ConfigError, CalibrationStoreError, MqttError) as error:
         raise click.ClickException(str(error)) from error
 

@@ -41,6 +41,14 @@ class StoredCalibration:
         }
 
 
+def zero_calibration() -> TareCalibration:
+    return TareCalibration(
+        offsets=CornerReading(0, 0, 0, 0),
+        sample_count=0,
+        maximum_corner_stddev=0,
+    )
+
+
 def _validate_for_storage(
     board_address: str, calibration: TareCalibration, created_at: datetime
 ) -> str:
@@ -157,3 +165,14 @@ def load_calibration(path: Path, board_address: str) -> StoredCalibration:
         created_at=created_at.astimezone(UTC),
         calibration=calibration,
     )
+
+
+def load_optional_calibration(
+    path: Path, board_address: str
+) -> StoredCalibration | None:
+    try:
+        return load_calibration(path, board_address)
+    except CalibrationStoreError as error:
+        if isinstance(error.__cause__, FileNotFoundError):
+            return None
+        raise

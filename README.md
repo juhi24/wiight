@@ -74,7 +74,13 @@ Bluetooth address; calibration from another board is rejected.
 
 ## Calibration
 
-Place the connected board on a firm surface with nothing touching it, then run:
+Initial tare calibration is optional. Without a calibration file, `measure` and
+the MQTT daemon use zero offsets and report the board's kernel-provided,
+factory-calibrated centikilogram values. MQTT status reports
+`"calibrated": false` in this mode.
+
+To remove the board's current empty-load offset, place it on a firm surface with
+nothing touching it, then run:
 
 ```console
 wiight tare --config /etc/wiight/wiight.toml
@@ -85,9 +91,12 @@ atomically writes the resulting per-corner offsets to the configured calibration
 path. It fails without replacing the existing calibration if the board is too
 unstable or too few samples arrive before the bounded capture ends.
 
+If a calibration file exists but is corrupt, incompatible, or belongs to a
+different board, startup fails instead of silently falling back to zero offsets.
+
 ## Measurement
 
-Measure one stable weight using the persisted tare calibration:
+Measure one stable weight, using persisted tare when available:
 
 ```console
 wiight measure --config /etc/wiight/wiight.toml
@@ -171,10 +180,11 @@ sudo install -m 0644 deploy/wiight.service /etc/systemd/system/wiight.service
 ```
 
 Edit the board address, broker settings, and credentials. Pair and connect the
-board through BlueZ, then initialize tare as the service user and start the
-daemon:
+board through BlueZ. Optionally initialize tare as the service user, then start
+the daemon:
 
 ```console
+# Optional:
 sudo -u wiight /opt/wiight/venv/bin/wiight tare \
 	--config /etc/wiight/wiight.toml
 sudo systemctl daemon-reload

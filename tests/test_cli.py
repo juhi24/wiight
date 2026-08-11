@@ -198,6 +198,26 @@ def test_measure_outputs_stable_synthetic_weight_as_json(
     }
 
 
+def test_measure_uses_zero_tare_when_calibration_is_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_path = tmp_path / "wiight.toml"
+    calibration_path = tmp_path / "missing-calibration.json"
+    write_config(config_path, calibration_path)
+    patch_hardware(
+        monkeypatch,
+        [captured_event(1, 25), captured_event(2, 25), captured_event(3, 25)],
+    )
+
+    result = CliRunner().invoke(
+        importlib.import_module("wiight.cli").main,
+        ["measure", "--config", str(config_path), "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["weight_kg"] == 1.0
+
+
 def test_measure_continuous_outputs_each_rearmed_measurement(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -317,3 +337,33 @@ def test_daemon_loads_config_calibration_and_environment_credentials(
     assert ("publisher", "user", "secret") in calls
     assert ("service", "00:22:4C:60:0C:DB", 100) in calls
     assert ("run", False) in calls
+
+
+def test_daemon_starts_without_initial_calibration(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_path = tmp_path / "wiight.toml"
+    write_config(config_path, tmp_path / "missing-calibration.json")
+    calibrations = []
+
+    class FakePublisher:
+        def __init__(self, config, *, username=None, password=None) -> None:
+            pass
+
+    class FakeService:
+        def __init__(self, config, calibration, publisher) -> None:
+            calibrations.append(calibration)
+
+        def run(self, stop_event) -> None:
+            pass
+
+    monkeypatch.setattr("wiight.mqtt.MqttPublisher", FakePublisher)
+    monkeypatch.setattr("wiight.daemon.DaemonService", FakeService)
+
+    result = CliRunner().invoke(
+        importlib.import_module("wiight.cli").main,
+        ["daemon", "--config", str(config_path)],
+    )
+
+    assert result.exit_code == 0
+    assert calibrations == [None]

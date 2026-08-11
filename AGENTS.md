@@ -26,6 +26,7 @@ Read [README.md](README.md) for user-facing installation information and [pyproj
 - [src/wiight/bluezutils.py](src/wiight/bluezutils.py) owns BlueZ object discovery and D-Bus adapter/device lookup.
 - Preserve the corner order `(top_left, top_right, bottom_right, bottom_left)` across raw readings, calibration values, tests, and public APIs.
 - Sensor readings are aggregated in centikilograms; conversion to kilograms happens at the presentation boundary by dividing by 100.
+- Persisted tare calibration is optional. When absent, measurement and daemon workflows use zero corner offsets and report `calibrated = false`; invalid existing calibration remains a hard error.
 - Avoid adding import-time hardware access, event-loop startup, or logging configuration. Keep side effects behind explicit calls and the CLI entry point.
 - Prefer typed data and explicit public exports when evolving the library API. Keep hardware-independent calculations deterministic and independently testable.
 

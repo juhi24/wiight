@@ -8,7 +8,9 @@ from wiight import CornerReading, TareCalibration
 from wiight.calibration import (
     CalibrationStoreError,
     load_calibration,
+    load_optional_calibration,
     store_calibration,
+    zero_calibration,
 )
 
 
@@ -106,3 +108,36 @@ def test_store_calibration_cleans_temporary_file_on_replace_failure(
 
     assert not path.exists()
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_optional_calibration_uses_zero_offsets_when_file_is_absent(
+    tmp_path: Path,
+) -> None:
+    stored = load_optional_calibration(tmp_path / "missing.json", BOARD_ADDRESS)
+
+    assert stored is None
+    assert zero_calibration() == TareCalibration(CornerReading(0, 0, 0, 0), 0, 0)
+
+
+def test_optional_calibration_still_rejects_invalid_existing_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "calibration.json"
+    path.write_text("not json", encoding="utf-8")
+
+    with pytest.raises(CalibrationStoreError, match="invalid calibration file"):
+        load_optional_calibration(path, BOARD_ADDRESS)
+
+
+def test_optional_calibration_does_not_hide_other_io_errors(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "calibration.json"
+
+    def fail_read(*args, **kwargs):
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(Path, "read_text", fail_read)
+
+    with pytest.raises(CalibrationStoreError, match="permission denied"):
+        load_optional_calibration(path, BOARD_ADDRESS)

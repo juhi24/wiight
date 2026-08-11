@@ -84,6 +84,33 @@ def test_daemon_publishes_only_stable_weight() -> None:
     assert json.loads(weight_messages[0].payload)["weight_kg"] == 10.0
 
 
+def test_daemon_uses_zero_tare_and_reports_uncalibrated() -> None:
+    publisher = RecordingPublisher()
+    config = ServiceConfig(
+        board=BoardConfig("00:22:4C:60:0C:DB"),
+        mqtt=MqttConfig(host="mqtt.local"),
+    )
+    daemon = DaemonEngine(config, None, publisher)
+
+    daemon.handle(WorkerStarted(0, "/device"))
+    for timestamp in (1.0, 2.0, 3.0):
+        daemon.handle(
+            WorkerSample(
+                1_786_454_600 + timestamp,
+                SensorSample(timestamp, CornerReading(250, 250, 250, 250)),
+            )
+        )
+
+    status = json.loads(publisher.messages[0].payload)
+    weight = next(
+        json.loads(message.payload)
+        for message in publisher.messages
+        if message.topic.endswith("/weight")
+    )
+    assert status["calibrated"] is False
+    assert weight["weight_kg"] == 10.0
+
+
 class FakeWorker:
     def __init__(self, stop_event: Event) -> None:
         self.events = WorkerMailbox(16)

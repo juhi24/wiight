@@ -7,6 +7,7 @@ from queue import Empty
 from threading import Event
 from typing import Protocol
 
+from wiight.calibration import zero_calibration
 from wiight.config import ServiceConfig
 from wiight.measurement import MeasurementConfig, StableWeightDetector, TareCalibration
 from wiight.mqtt import (
@@ -55,14 +56,16 @@ class DaemonState(Enum):
 @dataclass(slots=True)
 class DaemonEngine:
     config: ServiceConfig
-    calibration: TareCalibration
+    calibration: TareCalibration | None
     publisher: Publisher
     state: DaemonState = field(init=False)
     detector: StableWeightDetector = field(init=False)
+    calibrated: bool = field(init=False)
 
     def __post_init__(self) -> None:
         settings = self.config.measurement
         self.state = DaemonState.WAITING_FOR_BOARD
+        self.calibrated = self.calibration is not None
         self.detector = StableWeightDetector(
             MeasurementConfig(
                 minimum_weight_raw=settings.minimum_weight_centikilograms,
@@ -70,7 +73,7 @@ class DaemonEngine:
                 maximum_stddev_raw=settings.maximum_stddev_centikilograms,
                 unload_threshold_raw=settings.unload_threshold_centikilograms,
             ),
-            self.calibration,
+            self.calibration or zero_calibration(),
         )
 
     def handle(self, event: WorkerEvent) -> None:
@@ -102,7 +105,7 @@ class DaemonEngine:
                 self.config.mqtt,
                 state=self.state.value,
                 board_connected=board_connected,
-                calibrated=True,
+                calibrated=self.calibrated,
                 error=error,
             )
         )
@@ -120,7 +123,7 @@ def device_id(board_address: str) -> str:
 @dataclass(slots=True)
 class DaemonService:
     config: ServiceConfig
-    calibration: TareCalibration
+    calibration: TareCalibration | None
     publisher: Publisher
     worker: Worker | None = None
     engine: DaemonEngine = field(init=False)
