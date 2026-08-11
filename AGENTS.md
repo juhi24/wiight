@@ -13,7 +13,10 @@ Read [README.md](README.md) for user-facing installation information and [pyproj
 
 ## Code boundaries
 
-- [src/wiight/wiiweigh.py](src/wiight/wiiweigh.py) owns balance-board discovery, xwiimote event reading, calibration, aggregation, and the `wiight` CLI entry point.
+- [src/wiight/measurement.py](src/wiight/measurement.py) owns hardware-independent calibration and stable-weight calculations.
+- [src/wiight/hardware.py](src/wiight/hardware.py) owns bounded xwiimote discovery, interface lifecycle, event capture, and hardware errors.
+- [src/wiight/cli.py](src/wiight/cli.py) owns the `wiight` Click command group and presentation formats.
+- [src/wiight/wiiweigh.py](src/wiight/wiiweigh.py) contains the legacy discovery and measurement flow while it is incrementally replaced by the new modules.
 - [src/wiight/bluezutils.py](src/wiight/bluezutils.py) owns BlueZ object discovery and D-Bus adapter/device lookup.
 - Preserve the corner order `(top_left, top_right, bottom_right, bottom_left)` across raw readings, calibration values, tests, and public APIs.
 - Sensor readings are aggregated in centikilograms; conversion to kilograms happens at the presentation boundary by dividing by 100.
@@ -25,5 +28,7 @@ Read [README.md](README.md) for user-facing installation information and [pyproj
 The Python packages `dbus`, `gi`/GLib, and `xwiimote` depend on Linux system packages and services; they are intentionally available through Hatch's `system-packages = true` environment rather than normal PyPI dependencies. BlueZ access uses the system bus, and xwiimote reads are blocking.
 
 Do not require a physical board, a running BlueZ daemon, or a system D-Bus in unit tests. Mock those boundaries and use synthetic four-corner readings for calibration and aggregation tests. Mark genuine hardware integration tests explicitly and document their prerequisites.
+
+Use `wiight capture --duration SECONDS --output FILE.jsonl` for bounded hardware characterization. Capture output can contain personal weight data; keep it out of source control unless it has been intentionally anonymized as a test fixture.
 
 When changing device discovery, do not assume every `org.bluez.Device1` connection event belongs to the balance board. Match the intended device and preserve useful behavior when adapters or devices are absent.
