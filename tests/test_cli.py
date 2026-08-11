@@ -120,6 +120,47 @@ def test_config_check_rejects_calibration_for_other_board(tmp_path: Path) -> Non
     assert "belongs to board" in result.output
 
 
+def test_pair_uses_configured_board_and_timeout(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "wiight.toml"
+    write_config(config_path, tmp_path / "calibration.json")
+    calls = []
+    monkeypatch.setattr(
+        "wiight.bluezutils.pair_balance_board",
+        lambda address, adapter, *, timeout: calls.append(
+            (address, adapter, timeout)
+        ),
+    )
+
+    result = CliRunner().invoke(
+        importlib.import_module("wiight.cli").main,
+        ["pair", "--config", str(config_path), "--timeout", "12.5"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("00:22:4C:60:0C:DB", None, 12.5)]
+    assert "paired and connected" in result.output
+
+
+def test_pair_reports_bluez_failure(tmp_path: Path, monkeypatch) -> None:
+    from wiight.bluezutils import BlueZPairingError
+
+    config_path = tmp_path / "wiight.toml"
+    write_config(config_path, tmp_path / "calibration.json")
+
+    def fail_pair(address, adapter, *, timeout):
+        raise BlueZPairingError("interactive PIN request rejected")
+
+    monkeypatch.setattr("wiight.bluezutils.pair_balance_board", fail_pair)
+
+    result = CliRunner().invoke(
+        importlib.import_module("wiight.cli").main,
+        ["pair", "--config", str(config_path)],
+    )
+
+    assert result.exit_code != 0
+    assert "interactive PIN request rejected" in result.output
+
+
 def captured_event(timestamp: float, corner_value: float) -> hardware.CapturedEvent:
     return hardware.CapturedEvent(
         wall_time=100 + timestamp,

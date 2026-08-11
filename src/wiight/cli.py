@@ -98,6 +98,39 @@ def config_check(config_path: Path) -> None:
     default=Path("/etc/wiight/wiight.toml"),
     show_default=True,
 )
+@click.option(
+    "--timeout",
+    type=click.FloatRange(min=0, min_open=True),
+    default=30.0,
+    show_default=True,
+    help="Maximum discovery and pairing duration in seconds.",
+)
+def pair(config_path: Path, timeout: float) -> None:
+    """Discover, pair, trust, and connect the configured board."""
+    from wiight.bluezutils import BlueZPairingError, pair_balance_board
+    from wiight.config import ConfigError, load_config
+
+    try:
+        config = load_config(config_path)
+        pair_balance_board(
+            config.board.address,
+            config.board.adapter,
+            timeout=timeout,
+        )
+    except (ConfigError, BlueZPairingError) as error:
+        raise click.ClickException(str(error)) from error
+
+    click.echo(f"paired and connected balance board {config.board.address}")
+
+
+@main.command()
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("/etc/wiight/wiight.toml"),
+    show_default=True,
+)
 @click.option("--device", help="Explicit xwiimote sysfs device path.")
 @click.option(
     "--duration",

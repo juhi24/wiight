@@ -9,6 +9,7 @@
 
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Pairing](#pairing)
 - [Calibration](#calibration)
 - [Measurement](#measurement)
 - [Capture](#capture)
@@ -29,8 +30,7 @@ pip install 'wiight[mqtt]'
 ```
 
 Linux hardware access additionally requires BlueZ, the kernel `hid-wiimote`
-driver, libxwiimote, and its Python binding. The balance board must already be
-paired and connected.
+driver, libxwiimote, and its Python binding.
 
 ## Configuration
 
@@ -71,6 +71,22 @@ MQTT credentials are intentionally not accepted in this file. Supply them
 through the service environment or systemd credentials when MQTT support is
 configured. Tare calibration is stored as versioned JSON bound to the board's
 Bluetooth address; calibration from another board is rejected.
+
+## Pairing
+
+Press the balance board's red sync button, then pair and connect the configured
+board through BlueZ:
+
+```console
+wiight pair --config /etc/wiight/wiight.toml
+```
+
+Discovery and pairing share a 30-second deadline by default; use `--timeout` to
+change it. The command is restricted to the configured board address and
+adapter. It uses the same temporary `NoInputNoOutput` agent as MQTT pairing, so
+an unexpected PIN or passkey request is rejected rather than shown
+interactively. BlueZ's built-in Wii autopair plugin must be enabled to supply
+the balance board's binary PIN.
 
 ## Calibration
 
