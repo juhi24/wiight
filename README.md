@@ -165,8 +165,8 @@ measurement detection and publishing remain in the service thread.
 
 After publishing a stable weight, the service closes the xwiimote interface and
 asks BlueZ to disconnect the board to conserve its batteries. The service stays
-online and waits for the paired board to reconnect when its front button is
-pressed.
+online and periodically asks BlueZ to restore the paired board's HID profile.
+Pressing the board's front button makes it available for that reconnect.
 
 Home Assistant discovery includes a Pair button. Press the balance board's red
 sync button, then press Pair within 30 seconds. The same operation can be

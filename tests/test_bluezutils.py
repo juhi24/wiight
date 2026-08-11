@@ -135,6 +135,25 @@ def test_disconnect_device_calls_configured_bluez_device(monkeypatch) -> None:
     assert device.calls == [("Disconnect",)]
 
 
+def test_connect_device_profile_calls_configured_bluez_device(monkeypatch) -> None:
+    device = FakeDevice(paired=True, connected=False)
+    bus = FakeBus(device)
+    monkeypatch.setattr(bluezutils, "get_managed_objects", lambda current_bus: OBJECTS)
+    monkeypatch.setattr(bluezutils, "_dbus_module", lambda: FakeDbusModule)
+
+    bluezutils.connect_device_profile(
+        "11:22:33:44:55:66",
+        bluezutils.HID_SERVICE_UUID,
+        "hci0",
+        timeout=4.0,
+        bus=bus,
+    )
+
+    assert device.calls == [
+        ("ConnectProfile", bluezutils.HID_SERVICE_UUID, 4.0)
+    ]
+
+
 def test_get_managed_objects_wraps_bluez_failure(monkeypatch) -> None:
     class FakeDbusModule:
         @staticmethod

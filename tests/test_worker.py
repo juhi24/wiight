@@ -95,14 +95,14 @@ def test_worker_disconnect_closes_reader_then_disconnects_bluez() -> None:
 def test_worker_quietly_waits_when_intentionally_disconnected() -> None:
     stop_event = Event()
 
-    def discover(address: str, adapter: str | None) -> str:
+    def connect(address: str, adapter: str | None) -> None:
         stop_event.set()
         raise BalanceBoardNotFoundError("board unavailable")
 
     worker = HardwareWorker(
         BoardConfig("00:22:4C:60:0C:DB"),
         stop_event=stop_event,
-        discover=discover,
+        connect=connect,
     )
     worker._waiting_for_reconnect = True
 
@@ -110,6 +110,31 @@ def test_worker_quietly_waits_when_intentionally_disconnected() -> None:
 
     assert isinstance(worker.events.get_nowait(), WorkerStopped)
     assert worker.events.qsize() == 0
+
+
+def test_worker_connects_profile_before_rediscovering_after_disconnect() -> None:
+    stop_event = Event()
+    calls: list[str] = []
+
+    def connect(address: str, adapter: str | None) -> None:
+        calls.append("connect")
+
+    def discover(address: str, adapter: str | None) -> str:
+        calls.append("discover")
+        stop_event.set()
+        raise BalanceBoardNotFoundError("xwiimote device pending")
+
+    worker = HardwareWorker(
+        BoardConfig("00:22:4C:60:0C:DB"),
+        stop_event=stop_event,
+        connect=connect,
+        discover=discover,
+    )
+    worker._waiting_for_reconnect = True
+
+    worker._run()
+
+    assert calls == ["connect", "discover"]
 
 
 def test_worker_drops_samples_when_bounded_queue_is_full() -> None:

@@ -38,6 +38,10 @@ class BlueZPairingError(BlueZLookupError):
     pass
 
 
+class BlueZConnectionError(BlueZLookupError):
+    pass
+
+
 def _dbus_module():
     import dbus  # type: ignore[import-untyped]
 
@@ -147,6 +151,30 @@ def disconnect_device(
     except Exception as error:
         raise BlueZUnavailableError(
             f"could not disconnect Bluetooth device {device_address}: {error}"
+        ) from error
+
+
+def connect_device_profile(
+    device_address: str,
+    profile_uuid: str,
+    adapter_pattern: str | None = None,
+    *,
+    timeout: float = 4.0,
+    bus=None,
+) -> None:
+    if timeout <= 0:
+        raise ValueError("connection timeout must be positive")
+    try:
+        bus = bus or _system_bus()
+        device = find_device_in_objects(
+            get_managed_objects(bus), device_address, adapter_pattern, bus
+        )
+        device.ConnectProfile(profile_uuid, timeout=timeout)
+    except BlueZLookupError:
+        raise
+    except Exception as error:
+        raise BlueZConnectionError(
+            f"could not connect Bluetooth device {device_address}: {error}"
         ) from error
 
 

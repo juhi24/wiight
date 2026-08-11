@@ -119,6 +119,24 @@ def disconnect_configured_balance_board(
         raise BalanceBoardError(f"could not query BlueZ: {error}") from error
 
 
+def connect_configured_balance_board(
+    board_address: str,
+    adapter_pattern: str | None = None,
+) -> None:
+    try:
+        bluezutils.connect_device_profile(
+            board_address,
+            bluezutils.HID_SERVICE_UUID,
+            adapter_pattern,
+        )
+    except (bluezutils.BlueZConnectionError, bluezutils.DeviceNotFoundError) as error:
+        raise BalanceBoardNotFoundError(str(error)) from error
+    except bluezutils.BlueZLookupError as error:
+        raise BalanceBoardError(str(error)) from error
+    except (ImportError, OSError) as error:
+        raise BalanceBoardError(f"could not query BlueZ: {error}") from error
+
+
 class BalanceBoardReader:
     def __init__(self, device_path: str) -> None:
         self.device_path = device_path

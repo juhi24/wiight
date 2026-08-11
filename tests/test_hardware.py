@@ -168,6 +168,37 @@ def test_configured_discovery_rejects_disconnected_board(monkeypatch) -> None:
         hardware.find_configured_balance_board_path("00:22:4C:60:0C:DB")
 
 
+def test_configured_connect_opens_hid_profile(monkeypatch) -> None:
+    calls: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(
+        hardware.bluezutils,
+        "connect_device_profile",
+        lambda address, uuid, adapter: calls.append((address, uuid, adapter)),
+    )
+
+    hardware.connect_configured_balance_board("00:22:4C:60:0C:DB", "hci0")
+
+    assert calls == [
+        (
+            "00:22:4C:60:0C:DB",
+            hardware.bluezutils.HID_SERVICE_UUID,
+            "hci0",
+        )
+    ]
+
+
+def test_configured_connect_treats_unavailable_board_as_not_found(
+    monkeypatch,
+) -> None:
+    def connect(address: str, uuid: str, adapter: str | None) -> None:
+        raise hardware.bluezutils.BlueZConnectionError("host is down")
+
+    monkeypatch.setattr(hardware.bluezutils, "connect_device_profile", connect)
+
+    with pytest.raises(hardware.BalanceBoardNotFoundError, match="host is down"):
+        hardware.connect_configured_balance_board("00:22:4C:60:0C:DB")
+
+
 def test_configured_discovery_rejects_multiple_xwiimote_boards(monkeypatch) -> None:
     objects = {
         "/org/bluez/hci0/dev_00_22_4C_60_0C_DB": {

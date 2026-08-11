@@ -13,6 +13,7 @@ from wiight.hardware import (
     BalanceBoardNotFoundError,
     BalanceBoardReader,
     CapturedEvent,
+    connect_configured_balance_board,
     disconnect_configured_balance_board,
     find_configured_balance_board_path,
 )
@@ -121,6 +122,9 @@ class HardwareWorker:
         event_queue: WorkerMailbox | None = None,
         stop_event: Event | None = None,
         discover: Callable[[str, str | None], str] = find_configured_balance_board_path,
+        connect: Callable[
+            [str, str | None], None
+        ] = connect_configured_balance_board,
         disconnect: Callable[
             [str, str | None], None
         ] = disconnect_configured_balance_board,
@@ -131,6 +135,7 @@ class HardwareWorker:
         self.events = event_queue or WorkerMailbox(config.queue_size)
         self.stop_event = stop_event or Event()
         self._discover = discover
+        self._connect = connect
         self._disconnect = disconnect
         self._reader_factory = reader_factory
         self._thread = Thread(target=self._run, name="wiight-hardware", daemon=True)
@@ -183,6 +188,8 @@ class HardwareWorker:
         try:
             while not self.stop_event.is_set():
                 try:
+                    if self._waiting_for_reconnect:
+                        self._connect(self.board.address, self.board.adapter)
                     self.run_once()
                     if self._waiting_for_reconnect and self.stop_event.wait(
                         self.config.retry_delay

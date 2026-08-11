@@ -25,7 +25,7 @@ Read [README.md](README.md) for user-facing installation information and [pyproj
 - [src/wiight/wiiweigh.py](src/wiight/wiiweigh.py) contains the legacy discovery and measurement flow while it is incrementally replaced by the new modules. This module may be removed when it's no longer needed.
 - [src/wiight/bluezutils.py](src/wiight/bluezutils.py) owns BlueZ object discovery and D-Bus adapter/device lookup.
 - MQTT-triggered pairing is restricted to the configured board and adapter. Do not register Agent1 for Nintendo pairing: BlueZ's Wii autopair plugin must supply the binary adapter-address PIN.
-- After publishing a stable daemon measurement, disconnect the board through BlueZ and keep the worker alive waiting for a button-driven reconnect.
+- After publishing a stable daemon measurement, disconnect the board through BlueZ and keep the worker alive. While waiting, actively request the configured board's HID profile so its front button can trigger a reconnect.
 - Preserve the corner order `(top_left, top_right, bottom_right, bottom_left)` across raw readings, calibration values, tests, and public APIs.
 - Sensor readings are aggregated in centikilograms; conversion to kilograms happens at the presentation boundary by dividing by 100.
 - Persisted tare calibration is optional. When absent, measurement and daemon workflows use zero corner offsets and report `calibrated = false`; invalid existing calibration remains a hard error.
