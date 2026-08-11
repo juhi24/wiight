@@ -147,6 +147,21 @@ offline update before disconnecting. Corner samples are not published. Hardware
 access runs in a dedicated worker with bounded sample buffering, while stable
 measurement detection and publishing remain in the service thread.
 
+Home Assistant discovery includes a Pair button. Press the balance board's red
+sync button, then press Pair within 30 seconds. The same operation can be
+requested by publishing the exact payload `PAIR` at QoS 1, without retain, to
+`wiight/scale/pair/set` (relative to the configured base topic). Retained JSON
+status is published to `wiight/scale/pair/status` with the states `idle`,
+`pairing`, `paired`, or `failed`.
+
+Pairing is restricted to the configured board address and adapter. BlueZ's
+built-in `autopair` plugin recognizes `Nintendo RVL-WBC-01` and supplies the
+adapter address as the Wii protocol's binary PIN. During each request, wiight
+registers a `NoInputNoOutput` agent that rejects PIN and passkey prompts. This
+prevents a headless service from hanging or displaying an interactive prompt;
+if the BlueZ autopair plugin is unavailable, pairing fails with a diagnostic.
+Restrict publish access to the pair command topic with broker ACLs.
+
 ## Raspberry Pi Deployment
 
 The supported deployment target is Raspberry Pi OS Trixie with CPython 3.13.
@@ -179,9 +194,9 @@ sudo install -m 0600 -o root -g root \
 sudo install -m 0644 deploy/wiight.service /etc/systemd/system/wiight.service
 ```
 
-Edit the board address, broker settings, and credentials. Pair and connect the
-board through BlueZ. Optionally initialize tare as the service user, then start
-the daemon:
+Edit the board address, broker settings, and credentials. The board can be
+paired through BlueZ before startup or from the MQTT Pair button after startup.
+Optionally initialize tare as the service user, then start the daemon:
 
 ```console
 # Optional:

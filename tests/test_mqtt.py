@@ -1,13 +1,17 @@
 import json
 from datetime import UTC, datetime
+from typing import Any
 
 from wiight.config import MqttConfig
 from wiight.measurement import StableMeasurement
 from wiight.mqtt import (
     MqttError,
     MqttPublisher,
+    PairCommand,
     availability_message,
     discovery_message,
+    pair_command_topic,
+    pairing_status_message,
     status_message,
     weight_message,
 )
@@ -30,6 +34,10 @@ def test_availability_and_status_are_retained() -> None:
     assert availability.retain and availability.qos == 1
     assert availability.payload == "offline"
     assert status.retain and json.loads(status.payload)["error"] == "disconnected"
+
+    pairing = pairing_status_message(mqtt_config(), state="failed", error="timeout")
+    assert pairing.topic == "wiight/bathroom/pair/status"
+    assert pairing.retain and json.loads(pairing.payload)["state"] == "failed"
 
 
 def test_weight_is_non_retained_and_contains_no_corner_samples() -> None:
@@ -57,6 +65,10 @@ def test_discovery_is_retained_device_discovery() -> None:
     assert component["device_class"] == "weight"
     assert component["state_class"] == "measurement"
     assert component["unit_of_measurement"] == "kg"
+    assert payload["components"]["pair"]["command_topic"] == (
+        "wiight/bathroom/pair/set"
+    )
+    assert payload["components"]["pair"]["payload_press"] == "PAIR"
 
 
 def test_weight_rejects_naive_timestamp() -> None:
@@ -85,6 +97,8 @@ class FakePublishInfo:
 class FakeClient:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.on_connect: Any = None
+        self.on_message: Any = None
 
     def will_set(self, *args, **kwargs) -> None:
         self.calls.append(("will_set", args, kwargs))
@@ -97,6 +111,9 @@ class FakeClient:
 
     def connect(self, host: str, port: int) -> None:
         self.calls.append(("connect", host, port))
+
+    def subscribe(self, topic: str, qos: int) -> None:
+        self.calls.append(("subscribe", topic, qos))
 
     def loop_start(self) -> None:
         self.calls.append(("loop_start",))
@@ -135,6 +152,30 @@ def test_mqtt_publisher_configures_lwt_credentials_tls_and_lifecycle() -> None:
     assert any(call[0] == "publish" for call in client.calls)
     assert ("flush", 5.0) in client.calls
     assert client.calls[-2:] == [("disconnect",), ("loop_stop",)]
+
+
+def test_mqtt_publisher_buffers_only_non_retained_pair_commands() -> None:
+    client = FakeClient()
+    publisher = MqttPublisher(
+        mqtt_config(), client_factory=lambda client_id: client
+    )
+    client.on_connect(client, None, None, 0, None)
+
+    class Message:
+        topic = pair_command_topic(mqtt_config())
+        payload = b"PAIR"
+        retain = False
+
+    client.on_message(client, None, Message())
+    client.on_message(client, None, Message())
+
+    assert ("subscribe", "wiight/bathroom/pair/set", 1) in client.calls
+    assert isinstance(publisher.get_command(), PairCommand)
+    assert publisher.get_command() is None
+
+    Message.retain = True
+    client.on_message(client, None, Message())
+    assert publisher.get_command() is None
 
 
 def test_mqtt_publisher_requires_username_with_password() -> None:

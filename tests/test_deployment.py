@@ -23,7 +23,7 @@ def test_systemd_unit_has_service_lifecycle_and_hardening() -> None:
         "User=wiight",
         "ExecStart=/opt/wiight/venv/bin/wiight daemon",
         "Restart=on-failure",
-        "TimeoutStopSec=10s",
+        "TimeoutStopSec=40s",
         "StateDirectory=wiight",
         "NoNewPrivileges=true",
         "ProtectSystem=strict",

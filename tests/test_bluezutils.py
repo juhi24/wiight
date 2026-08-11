@@ -95,3 +95,33 @@ def test_get_managed_objects_wraps_bluez_failure(monkeypatch) -> None:
         assert "system bus unavailable" in str(error)
     else:
         raise AssertionError("BlueZ failure should be wrapped")
+
+
+def test_discover_device_is_bounded_and_stops_discovery(monkeypatch) -> None:
+    class Adapter:
+        def __init__(self) -> None:
+            self.started = False
+            self.stopped = False
+
+        def StartDiscovery(self) -> None:
+            self.started = True
+
+        def StopDiscovery(self) -> None:
+            self.stopped = True
+
+    adapter = Adapter()
+    times = iter((0.0, 0.0, 0.25, 0.25))
+    monkeypatch.setattr(bluezutils.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(bluezutils.time, "sleep", lambda duration: None)
+    monkeypatch.setattr(bluezutils, "get_managed_objects", lambda bus: {})
+
+    try:
+        bluezutils._discover_device_path(
+            object(), adapter, "11:22:33:44:55:66", "/org/bluez/hci0", 0.25
+        )
+    except bluezutils.BlueZPairingError as error:
+        assert "sync button" in str(error)
+    else:
+        raise AssertionError("undiscovered board should time out")
+
+    assert adapter.started and adapter.stopped

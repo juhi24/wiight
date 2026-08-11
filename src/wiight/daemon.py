@@ -7,13 +7,16 @@ from queue import Empty
 from threading import Event
 from typing import Protocol
 
+from wiight import bluezutils
 from wiight.calibration import zero_calibration
 from wiight.config import ServiceConfig
 from wiight.measurement import MeasurementConfig, StableWeightDetector, TareCalibration
 from wiight.mqtt import (
+    PairCommand,
     PublishMessage,
     availability_message,
     discovery_message,
+    pairing_status_message,
     status_message,
     weight_message,
 )
@@ -33,6 +36,8 @@ class Publisher(Protocol):
 
     def publish(self, message: PublishMessage) -> None: ...
 
+    def get_command(self, timeout: float = 0.0) -> PairCommand | None: ...
+
     def flush(self, timeout: float = 5.0) -> None: ...
 
     def stop(self, timeout: float = 5.0) -> None: ...
@@ -44,6 +49,19 @@ class Worker(Protocol):
     def start(self) -> None: ...
 
     def stop(self, timeout: float = 5.0) -> None: ...
+
+
+class Pairer(Protocol):
+    def pair(
+        self, address: str, adapter: str | None, *, timeout: float
+    ) -> str: ...
+
+
+class BlueZPairer:
+    def pair(
+        self, address: str, adapter: str | None, *, timeout: float
+    ) -> str:
+        return bluezutils.pair_balance_board(address, adapter, timeout=timeout)
 
 
 class DaemonState(Enum):
@@ -126,12 +144,15 @@ class DaemonService:
     calibration: TareCalibration | None
     publisher: Publisher
     worker: Worker | None = None
+    pairer: Pairer | None = None
     engine: DaemonEngine = field(init=False)
 
     def __post_init__(self) -> None:
         self.engine = DaemonEngine(self.config, self.calibration, self.publisher)
         if self.worker is None:
             self.worker = HardwareWorker(self.config.board)
+        if self.pairer is None:
+            self.pairer = BlueZPairer()
 
     def run(self, stop_event: Event) -> None:
         assert self.worker is not None
@@ -144,9 +165,15 @@ class DaemonService:
             self.publisher.publish(discovery_message(self.config.mqtt, identifier))
             self.publisher.publish(availability_message(self.config.mqtt, True))
             self.engine.publish_status(board_connected=False)
+            self.publisher.publish(
+                pairing_status_message(self.config.mqtt, state="idle")
+            )
             self.worker.start()
             worker_started = True
             while not stop_event.is_set():
+                command = self.publisher.get_command()
+                if isinstance(command, PairCommand):
+                    self._pair_board()
                 try:
                     event = self.worker.events.get(timeout=0.25)
                 except Empty:
@@ -166,6 +193,28 @@ class DaemonService:
                         self.publisher.flush()
                     finally:
                         self.publisher.stop()
+
+    def _pair_board(self) -> None:
+        assert self.pairer is not None
+        self.publisher.publish(
+            pairing_status_message(self.config.mqtt, state="pairing")
+        )
+        try:
+            self.pairer.pair(
+                self.config.board.address,
+                self.config.board.adapter,
+                timeout=30.0,
+            )
+        except bluezutils.BlueZPairingError as error:
+            self.publisher.publish(
+                pairing_status_message(
+                    self.config.mqtt, state="failed", error=str(error)
+                )
+            )
+        else:
+            self.publisher.publish(
+                pairing_status_message(self.config.mqtt, state="paired")
+            )
 
     def _drain_events(self) -> None:
         assert self.worker is not None

@@ -4,6 +4,7 @@ import json
 import importlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from queue import Empty, Full, Queue
 from typing import Any, Callable
 
 from wiight.config import MqttConfig
@@ -16,6 +17,11 @@ class PublishMessage:
     payload: str
     qos: int = 1
     retain: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PairCommand:
+    pass
 
 
 class MqttError(RuntimeError):
@@ -47,6 +53,9 @@ class MqttPublisher:
         self._client = client_factory(config.client_id)
         self._started = False
         self._last_publish: Any | None = None
+        self._commands: Queue[PairCommand] = Queue(maxsize=1)
+        self._client.on_connect = self._on_connect
+        self._client.on_message = self._on_message
         offline = availability_message(config, False)
         self._client.will_set(
             offline.topic,
@@ -87,6 +96,38 @@ class MqttPublisher:
             raise MqttError(f"MQTT publish failed with result {info.rc}")
         self._last_publish = info
 
+    def get_command(self, timeout: float = 0.0) -> PairCommand | None:
+        try:
+            return self._commands.get(timeout=timeout)
+        except Empty:
+            return None
+
+    def _on_connect(
+        self,
+        client: Any,
+        userdata: Any,
+        flags: Any,
+        reason_code: Any,
+        properties: Any,
+    ) -> None:
+        if getattr(reason_code, "is_failure", False):
+            return
+        client.subscribe(pair_command_topic(self.config), qos=1)
+
+    def _on_message(self, client: Any, userdata: Any, message: Any) -> None:
+        if message.topic != pair_command_topic(self.config) or message.retain:
+            return
+        try:
+            payload = bytes(message.payload).decode("utf-8")
+        except (UnicodeDecodeError, ValueError):
+            return
+        if payload != "PAIR":
+            return
+        try:
+            self._commands.put_nowait(PairCommand())
+        except Full:
+            pass
+
     def flush(self, timeout: float = 5.0) -> None:
         if self._last_publish is None:
             return
@@ -110,6 +151,22 @@ def availability_message(config: MqttConfig, online: bool) -> PublishMessage:
     return PublishMessage(
         topic=f"{config.base_topic}/availability",
         payload="online" if online else "offline",
+        retain=True,
+    )
+
+
+def pair_command_topic(config: MqttConfig) -> str:
+    return f"{config.base_topic}/pair/set"
+
+
+def pairing_status_message(
+    config: MqttConfig, *, state: str, error: str | None = None
+) -> PublishMessage:
+    return PublishMessage(
+        topic=f"{config.base_topic}/pair/status",
+        payload=json.dumps(
+            {"state": state, "error": error}, separators=(",", ":")
+        ),
         retain=True,
     )
 
@@ -181,7 +238,17 @@ def discovery_message(config: MqttConfig, device_id: str) -> PublishMessage:
                 "availability_topic": availability_topic,
                 "payload_available": "online",
                 "payload_not_available": "offline",
-            }
+            },
+            "pair": {
+                "platform": "button",
+                "name": "Pair",
+                "unique_id": f"{device_id}_pair",
+                "command_topic": pair_command_topic(config),
+                "payload_press": "PAIR",
+                "availability_topic": availability_topic,
+                "payload_available": "online",
+                "payload_not_available": "offline",
+            },
         },
     }
     return PublishMessage(

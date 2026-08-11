@@ -2,9 +2,10 @@ import json
 from threading import Event
 
 from wiight import CornerReading, SensorSample, TareCalibration
+from wiight import bluezutils
 from wiight.config import BoardConfig, MqttConfig, ServiceConfig
 from wiight.daemon import DaemonEngine, DaemonService, DaemonState
-from wiight.mqtt import PublishMessage
+from wiight.mqtt import PairCommand, PublishMessage
 from wiight.worker import (
     WorkerError,
     WorkerMailbox,
@@ -20,12 +21,16 @@ class RecordingPublisher:
         self.started = False
         self.stopped = False
         self.flushed = False
+        self.commands: list[PairCommand] = []
 
     def start(self) -> None:
         self.started = True
 
     def publish(self, message: PublishMessage) -> None:
         self.messages.append(message)
+
+    def get_command(self, timeout: float = 0.0) -> PairCommand | None:
+        return self.commands.pop(0) if self.commands else None
 
     def flush(self, timeout: float = 5.0) -> None:
         self.flushed = True
@@ -138,6 +143,22 @@ class FakeWorker:
         self.events.put_control(WorkerStopped(4))
 
 
+class FakePairer:
+    def __init__(self, stop_event: Event, error: str | None = None) -> None:
+        self.stop_event = stop_event
+        self.error = error
+        self.calls: list[tuple[str, str | None, float]] = []
+
+    def pair(
+        self, address: str, adapter: str | None, *, timeout: float
+    ) -> str:
+        self.calls.append((address, adapter, timeout))
+        self.stop_event.set()
+        if self.error is not None:
+            raise bluezutils.BlueZPairingError(self.error)
+        return "/org/bluez/hci0/dev_00_22_4C_60_0C_DB"
+
+
 def test_daemon_service_publishes_startup_measurement_and_offline_shutdown() -> None:
     config = ServiceConfig(
         board=BoardConfig("00:22:4C:60:0C:DB"),
@@ -158,3 +179,55 @@ def test_daemon_service_publishes_startup_measurement_and_offline_shutdown() -> 
     assert any(message.topic.endswith("/weight") for message in publisher.messages)
     assert publisher.messages[-1].payload == "offline"
     assert publisher.messages[-1].retain
+
+
+def test_daemon_service_handles_pair_command_and_publishes_result() -> None:
+    config = ServiceConfig(
+        board=BoardConfig("00:22:4C:60:0C:DB", adapter="hci0"),
+        mqtt=MqttConfig(host="mqtt.local"),
+    )
+    publisher = RecordingPublisher()
+    publisher.commands.append(PairCommand())
+    stop_event = Event()
+    worker = FakeWorker(Event())
+    pairer = FakePairer(stop_event)
+    service = DaemonService(config, None, publisher, worker, pairer)
+
+    service.run(stop_event)
+
+    assert pairer.calls == [("00:22:4C:60:0C:DB", "hci0", 30.0)]
+    pairing_states = [
+        json.loads(message.payload)["state"]
+        for message in publisher.messages
+        if message.topic.endswith("/pair/status")
+    ]
+    assert pairing_states == ["idle", "pairing", "paired"]
+
+
+def test_daemon_service_reports_pair_failure_without_stopping_early() -> None:
+    config = ServiceConfig(
+        board=BoardConfig("00:22:4C:60:0C:DB"),
+        mqtt=MqttConfig(host="mqtt.local"),
+    )
+    publisher = RecordingPublisher()
+    publisher.commands.append(PairCommand())
+    stop_event = Event()
+    worker = FakeWorker(Event())
+    service = DaemonService(
+        config,
+        None,
+        publisher,
+        worker,
+        FakePairer(stop_event, "autopair plugin unavailable"),
+    )
+
+    service.run(stop_event)
+
+    pairing = next(
+        json.loads(message.payload)
+        for message in publisher.messages
+        if message.topic.endswith("/pair/status")
+        and json.loads(message.payload)["state"] == "failed"
+    )
+    assert pairing["error"] == "autopair plugin unavailable"
+    assert worker.stopped and publisher.stopped
