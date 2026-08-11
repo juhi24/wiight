@@ -9,7 +9,7 @@ from click.testing import CliRunner
 
 import wiight.hardware as hardware
 from wiight import CornerReading
-from wiight.calibration import store_calibration
+from wiight.calibration import load_calibration, store_calibration
 from wiight.measurement import TareCalibration
 
 
@@ -71,6 +71,14 @@ address = "00:22:4C:60:0C:DB"
 
 [calibration]
 path = "{calibration_path}"
+minimum_samples = 3
+maximum_corner_stddev_centikilograms = 2
+
+[measurement]
+minimum_weight_centikilograms = 100
+stable_duration_seconds = 2
+maximum_stddev_centikilograms = 2
+unload_threshold_centikilograms = 20
 
 [mqtt]
 host = "mqtt.local"
@@ -110,3 +118,111 @@ def test_config_check_rejects_calibration_for_other_board(tmp_path: Path) -> Non
 
     assert result.exit_code != 0
     assert "belongs to board" in result.output
+
+
+def captured_event(timestamp: float, corner_value: float) -> hardware.CapturedEvent:
+    return hardware.CapturedEvent(
+        wall_time=100 + timestamp,
+        monotonic_time=timestamp,
+        event_type=3,
+        corners=CornerReading(*(corner_value for _ in range(4))),
+    )
+
+
+def patch_hardware(monkeypatch, events) -> None:
+    @contextmanager
+    def fake_open(device):
+        yield object()
+
+    monkeypatch.setattr(hardware, "open_balance_board", fake_open)
+    monkeypatch.setattr(
+        hardware,
+        "capture_events",
+        lambda *args, **kwargs: (event for event in events),
+    )
+
+
+def test_tare_persists_synthetic_calibration(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "wiight.toml"
+    calibration_path = tmp_path / "calibration.json"
+    write_config(config_path, calibration_path)
+    patch_hardware(
+        monkeypatch,
+        [captured_event(1, 10), captured_event(2, 11), captured_event(3, 12)],
+    )
+
+    result = CliRunner().invoke(
+        importlib.import_module("wiight.cli").main,
+        ["tare", "--config", str(config_path)],
+    )
+
+    assert result.exit_code == 0
+    assert "tare saved" in result.output
+    stored = load_calibration(calibration_path, "00:22:4C:60:0C:DB")
+    assert stored.calibration.offsets == CornerReading(11, 11, 11, 11)
+
+
+def test_measure_outputs_stable_synthetic_weight_as_json(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_path = tmp_path / "wiight.toml"
+    calibration_path = tmp_path / "calibration.json"
+    write_config(config_path, calibration_path)
+    store_calibration(
+        calibration_path,
+        "00:22:4C:60:0C:DB",
+        TareCalibration(CornerReading(0, 0, 0, 0), 100, 0),
+    )
+    patch_hardware(
+        monkeypatch,
+        [captured_event(1, 25), captured_event(2, 25), captured_event(3, 25)],
+    )
+
+    result = CliRunner().invoke(
+        importlib.import_module("wiight.cli").main,
+        ["measure", "--config", str(config_path), "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output) == {
+        "weight_kg": 1.0,
+        "dispersion_kg": 0.0,
+        "monotonic_time": 3,
+        "sample_count": 3,
+    }
+
+
+def test_measure_continuous_outputs_each_rearmed_measurement(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_path = tmp_path / "wiight.toml"
+    calibration_path = tmp_path / "calibration.json"
+    write_config(config_path, calibration_path)
+    store_calibration(
+        calibration_path,
+        "00:22:4C:60:0C:DB",
+        TareCalibration(CornerReading(0, 0, 0, 0), 100, 0),
+    )
+    patch_hardware(
+        monkeypatch,
+        [
+            captured_event(1, 25),
+            captured_event(2, 25),
+            captured_event(3, 25),
+            captured_event(4, 0),
+            captured_event(5, 30),
+            captured_event(6, 30),
+            captured_event(7, 30),
+        ],
+    )
+
+    result = CliRunner().invoke(
+        importlib.import_module("wiight.cli").main,
+        ["measure", "--config", str(config_path), "--continuous", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert [json.loads(line)["weight_kg"] for line in result.output.splitlines()] == [
+        1.0,
+        1.2,
+    ]

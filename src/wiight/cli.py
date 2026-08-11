@@ -87,5 +87,157 @@ def config_check(config_path: Path) -> None:
     )
 
 
+@main.command()
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("/etc/wiight/wiight.toml"),
+    show_default=True,
+)
+@click.option("--device", help="Explicit xwiimote sysfs device path.")
+@click.option(
+    "--duration",
+    type=click.FloatRange(min=0, min_open=True),
+    default=10.0,
+    show_default=True,
+    help="Maximum tare capture duration in seconds.",
+)
+@click.option(
+    "--idle-timeout",
+    type=click.FloatRange(min=0, min_open=True),
+    default=2.0,
+    show_default=True,
+)
+def tare(
+    config_path: Path,
+    device: str | None,
+    duration: float,
+    idle_timeout: float,
+) -> None:
+    """Tare an unloaded board and persist its corner offsets."""
+    from wiight.calibration import CalibrationStoreError, store_calibration
+    from wiight.config import ConfigError, load_config
+    from wiight.hardware import BalanceBoardError, capture_events, open_balance_board
+    from wiight.measurement import CalibrationError
+    from wiight.session import calculate_tare
+
+    try:
+        config = load_config(config_path)
+        with open_balance_board(device) as interface:
+            events = capture_events(
+                interface, duration=duration, idle_timeout=idle_timeout
+            )
+            try:
+                calibration = calculate_tare(events, config.calibration)
+            finally:
+                events.close()
+        store_calibration(
+            config.calibration.path,
+            config.board.address,
+            calibration,
+        )
+    except (ConfigError, BalanceBoardError, CalibrationError, CalibrationStoreError) as error:
+        raise click.ClickException(str(error)) from error
+
+    click.echo(
+        f"tare saved: samples={calibration.sample_count} "
+        f"maximum_corner_stddev={calibration.maximum_corner_stddev:.3f} ckg "
+        f"path={config.calibration.path}"
+    )
+
+
+@main.command()
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("/etc/wiight/wiight.toml"),
+    show_default=True,
+)
+@click.option("--device", help="Explicit xwiimote sysfs device path.")
+@click.option(
+    "--timeout",
+    type=click.FloatRange(min=0, min_open=True),
+    default=30.0,
+    show_default=True,
+    help="Maximum measurement session duration in seconds.",
+)
+@click.option(
+    "--idle-timeout",
+    type=click.FloatRange(min=0, min_open=True),
+    default=2.0,
+    show_default=True,
+)
+@click.option("--continuous", is_flag=True, help="Emit each measurement after unload.")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON Lines.")
+def measure(
+    config_path: Path,
+    device: str | None,
+    timeout: float,
+    idle_timeout: float,
+    continuous: bool,
+    json_output: bool,
+) -> None:
+    """Measure stable weight using the persisted tare calibration."""
+    from wiight.calibration import CalibrationStoreError, load_calibration
+    from wiight.config import ConfigError, load_config
+    from wiight.hardware import BalanceBoardError, capture_events, open_balance_board
+    from wiight.measurement import centikilograms_to_kilograms
+    from wiight.session import MeasurementTimeoutError, measure_once, stable_measurements
+
+    def emit(measurement) -> None:
+        weight_kg = centikilograms_to_kilograms(measurement.raw_total)
+        dispersion_kg = centikilograms_to_kilograms(measurement.raw_stddev)
+        if json_output:
+            click.echo(
+                json.dumps(
+                    {
+                        "weight_kg": weight_kg,
+                        "dispersion_kg": dispersion_kg,
+                        "monotonic_time": measurement.monotonic_time,
+                        "sample_count": measurement.sample_count,
+                    },
+                    separators=(",", ":"),
+                )
+            )
+        else:
+            click.echo(f"{weight_kg:.2f} kg +/- {dispersion_kg:.2f} kg")
+
+    try:
+        config = load_config(config_path)
+        stored = load_calibration(config.calibration.path, config.board.address)
+        with open_balance_board(device) as interface:
+            events = capture_events(
+                interface, duration=timeout, idle_timeout=idle_timeout
+            )
+            try:
+                if continuous:
+                    emitted = False
+                    for measurement in stable_measurements(
+                        events,
+                        stored.calibration,
+                        config.measurement,
+                    ):
+                        emit(measurement)
+                        emitted = True
+                    if not emitted:
+                        raise MeasurementTimeoutError(
+                            "capture ended before a stable weight measurement was available"
+                        )
+                else:
+                    emit(
+                        measure_once(
+                            events,
+                            stored.calibration,
+                            config.measurement,
+                        )
+                    )
+            finally:
+                events.close()
+    except (ConfigError, CalibrationStoreError, BalanceBoardError, MeasurementTimeoutError) as error:
+        raise click.ClickException(str(error)) from error
+
+
 if __name__ == "__main__":
     main()

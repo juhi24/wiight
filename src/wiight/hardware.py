@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import select
 import time
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from math import ceil
@@ -101,7 +101,7 @@ def capture_events(
     *,
     duration: float,
     idle_timeout: float,
-) -> Iterator[CapturedEvent]:
+) -> Generator[CapturedEvent, None, None]:
     xwiimote = _xwiimote_module()
     poller = select.poll()
     file_descriptor = interface.get_fd()

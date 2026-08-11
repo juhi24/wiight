@@ -17,6 +17,13 @@ from wiight.measurement import (
 	centikilograms_to_kilograms,
 	compute_tare,
 )
+from wiight.session import (
+	MeasurementTimeoutError,
+	calculate_tare,
+	measure_once,
+	sensor_samples,
+	stable_measurements,
+)
 
 __all__ = [
 	"CENTIKILOGRAMS_PER_KILOGRAM",
@@ -25,11 +32,16 @@ __all__ = [
 	"CornerReading",
 	"InsufficientSamplesError",
 	"MeasurementConfig",
+	"MeasurementTimeoutError",
 	"SensorSample",
 	"StableMeasurement",
 	"StableWeightDetector",
 	"TareCalibration",
 	"UnstableCalibrationError",
+	"calculate_tare",
 	"centikilograms_to_kilograms",
 	"compute_tare",
+	"measure_once",
+	"sensor_samples",
+	"stable_measurements",
 ]

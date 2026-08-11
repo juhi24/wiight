@@ -9,6 +9,8 @@
 
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Calibration](#calibration)
+- [Measurement](#measurement)
 - [Capture](#capture)
 - [License](#license)
 
@@ -61,6 +63,36 @@ MQTT credentials are intentionally not accepted in this file. Supply them
 through the service environment or systemd credentials when MQTT support is
 configured. Tare calibration is stored as versioned JSON bound to the board's
 Bluetooth address; calibration from another board is rejected.
+
+## Calibration
+
+Place the connected board on a firm surface with nothing touching it, then run:
+
+```console
+wiight tare --config /etc/wiight/wiight.toml
+```
+
+The command collects the configured number of stable empty-board samples and
+atomically writes the resulting per-corner offsets to the configured calibration
+path. It fails without replacing the existing calibration if the board is too
+unstable or too few samples arrive before the bounded capture ends.
+
+## Measurement
+
+Measure one stable weight using the persisted tare calibration:
+
+```console
+wiight measure --config /etc/wiight/wiight.toml
+```
+
+Use `--json` for machine-readable JSON Lines. Use `--continuous` to emit another
+measurement after the board has been unloaded and occupied again. `--timeout`
+and `--idle-timeout` bound the session and event wait respectively.
+
+Tare and measurement currently operate on the single connected balance board,
+or the explicit xwiimote path supplied with `--device`. Matching that device to
+the configured Bluetooth address is reserved for the connection state-machine
+milestone.
 
 ## Capture
 
