@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 from pathlib import Path
+from threading import Event
 
 import click
 
@@ -253,6 +256,51 @@ def measure(
                 events.close()
     except (ConfigError, CalibrationStoreError, BalanceBoardError, MeasurementTimeoutError) as error:
         raise click.ClickException(str(error)) from error
+
+
+@main.command()
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("/etc/wiight/wiight.toml"),
+    show_default=True,
+)
+def daemon(config_path: Path) -> None:
+    """Run the foreground MQTT smart-scale service."""
+    from wiight.calibration import CalibrationStoreError, load_calibration
+    from wiight.config import ConfigError, load_config
+    from wiight.daemon import DaemonService
+    from wiight.mqtt import MqttError, MqttPublisher
+
+    try:
+        config = load_config(config_path)
+        stored = load_calibration(config.calibration.path, config.board.address)
+        publisher = MqttPublisher(
+            config.mqtt,
+            username=os.environ.get("WIIGHT_MQTT_USERNAME"),
+            password=os.environ.get("WIIGHT_MQTT_PASSWORD"),
+        )
+        service = DaemonService(config, stored.calibration, publisher)
+    except (ConfigError, CalibrationStoreError, MqttError) as error:
+        raise click.ClickException(str(error)) from error
+
+    stop_event = Event()
+
+    def request_stop(signum, frame) -> None:
+        stop_event.set()
+
+    previous_handlers = {
+        signum: signal.signal(signum, request_stop)
+        for signum in (signal.SIGINT, signal.SIGTERM)
+    }
+    try:
+        service.run(stop_event)
+    except MqttError as error:
+        raise click.ClickException(str(error)) from error
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
 
 
 if __name__ == "__main__":

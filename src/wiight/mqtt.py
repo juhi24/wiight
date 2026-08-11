@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import importlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Callable
 
 from wiight.config import MqttConfig
 from wiight.measurement import StableMeasurement, centikilograms_to_kilograms
@@ -15,6 +16,94 @@ class PublishMessage:
     payload: str
     qos: int = 1
     retain: bool = False
+
+
+class MqttError(RuntimeError):
+    pass
+
+
+def _default_client_factory(client_id: str):
+    try:
+        mqtt = importlib.import_module("paho.mqtt.client")
+    except ImportError as error:
+        raise MqttError(
+            "MQTT support requires the optional paho-mqtt dependency"
+        ) from error
+    return mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+
+
+class MqttPublisher:
+    def __init__(
+        self,
+        config: MqttConfig,
+        *,
+        username: str | None = None,
+        password: str | None = None,
+        client_factory: Callable[[str], Any] = _default_client_factory,
+    ) -> None:
+        if password is not None and username is None:
+            raise MqttError("MQTT password requires a username")
+        self.config = config
+        self._client = client_factory(config.client_id)
+        self._started = False
+        self._last_publish: Any | None = None
+        offline = availability_message(config, False)
+        self._client.will_set(
+            offline.topic,
+            offline.payload,
+            qos=offline.qos,
+            retain=offline.retain,
+        )
+        if username is not None:
+            self._client.username_pw_set(username, password)
+        if config.tls:
+            self._client.tls_set()
+
+    def start(self) -> None:
+        if self._started:
+            raise MqttError("MQTT publisher is already started")
+        try:
+            self._client.connect(self.config.host, self.config.port)
+            self._client.loop_start()
+        except Exception as error:
+            try:
+                self._client.disconnect()
+                self._client.loop_stop()
+            except Exception:
+                pass
+            raise MqttError(f"could not connect to MQTT broker: {error}") from error
+        self._started = True
+
+    def publish(self, message: PublishMessage) -> None:
+        if not self._started:
+            raise MqttError("MQTT publisher is not started")
+        info = self._client.publish(
+            message.topic,
+            message.payload,
+            qos=message.qos,
+            retain=message.retain,
+        )
+        if getattr(info, "rc", 0) != 0:
+            raise MqttError(f"MQTT publish failed with result {info.rc}")
+        self._last_publish = info
+
+    def flush(self, timeout: float = 5.0) -> None:
+        if self._last_publish is None:
+            return
+        try:
+            self._last_publish.wait_for_publish(timeout=timeout)
+        except Exception as error:
+            raise MqttError(f"MQTT publish did not flush: {error}") from error
+
+    def stop(self, timeout: float = 5.0) -> None:
+        if not self._started:
+            return
+        try:
+            self._client.disconnect()
+            self._client.loop_stop()
+        finally:
+            self._started = False
+            self._last_publish = None
 
 
 def availability_message(config: MqttConfig, online: bool) -> PublishMessage:

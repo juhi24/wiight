@@ -17,9 +17,21 @@ from wiight.worker import (
 class RecordingPublisher:
     def __init__(self) -> None:
         self.messages: list[PublishMessage] = []
+        self.started = False
+        self.stopped = False
+        self.flushed = False
+
+    def start(self) -> None:
+        self.started = True
 
     def publish(self, message: PublishMessage) -> None:
         self.messages.append(message)
+
+    def flush(self, timeout: float = 5.0) -> None:
+        self.flushed = True
+
+    def stop(self, timeout: float = 5.0) -> None:
+        self.stopped = True
 
 
 def engine() -> tuple[DaemonEngine, RecordingPublisher]:
@@ -113,6 +125,7 @@ def test_daemon_service_publishes_startup_measurement_and_offline_shutdown() -> 
     service.run(stop_event)
 
     assert worker.started and worker.stopped
+    assert publisher.started and publisher.flushed and publisher.stopped
     assert publisher.messages[0].topic.endswith("/config")
     assert publisher.messages[1].payload == "online"
     assert any(message.topic.endswith("/weight") for message in publisher.messages)

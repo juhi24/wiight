@@ -12,12 +12,19 @@
 - [Calibration](#calibration)
 - [Measurement](#measurement)
 - [Capture](#capture)
+- [MQTT Service](#mqtt-service)
 - [License](#license)
 
 ## Installation
 
 ```console
 pip install wiight
+```
+
+Install the optional MQTT transport for service operation:
+
+```console
+pip install 'wiight[mqtt]'
 ```
 
 Linux hardware access additionally requires BlueZ, the kernel `hid-wiimote`
@@ -113,15 +120,22 @@ total. Sensor values are centikilograms.
 Capture files can contain personal weight data. Do not commit them unless they
 have been intentionally anonymized for use as test fixtures.
 
-## Service Status
+## MQTT Service
 
-The service core now runs hardware access behind a dedicated worker contract
-with bounded sample buffering, cooperative shutdown, reconnect errors, and
-stable-measurement processing in the service thread. MQTT topic, payload,
-retention, availability, and Home Assistant discovery contracts are implemented
-without retaining personal weight measurements. The network client and
-`wiight daemon` command are the next deployment milestone and are not yet
-available.
+Run the foreground service, suitable for supervision by systemd:
+
+```console
+WIIGHT_MQTT_USERNAME=wiight \
+WIIGHT_MQTT_PASSWORD=secret \
+wiight daemon --config /etc/wiight/wiight.toml
+```
+
+The daemon publishes retained Home Assistant device discovery, retained
+availability and status, and non-retained stable weight measurements at QoS 1.
+The MQTT client configures a retained offline last will and flushes a graceful
+offline update before disconnecting. Corner samples are not published. Hardware
+access runs in a dedicated worker with bounded sample buffering, while stable
+measurement detection and publishing remain in the service thread.
 
 ## License
 

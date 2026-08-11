@@ -277,3 +277,43 @@ def test_tare_explicit_device_bypasses_configured_discovery(
     )
 
     assert result.exit_code == 0
+
+
+def test_daemon_loads_config_calibration_and_environment_credentials(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_path = tmp_path / "wiight.toml"
+    calibration_path = tmp_path / "calibration.json"
+    write_config(config_path, calibration_path)
+    store_calibration(
+        calibration_path,
+        "00:22:4C:60:0C:DB",
+        TareCalibration(CornerReading(0, 0, 0, 0), 100, 0),
+    )
+    calls = []
+
+    class FakePublisher:
+        def __init__(self, config, *, username=None, password=None) -> None:
+            calls.append(("publisher", username, password))
+
+    class FakeService:
+        def __init__(self, config, calibration, publisher) -> None:
+            calls.append(("service", config.board.address, calibration.sample_count))
+
+        def run(self, stop_event) -> None:
+            calls.append(("run", stop_event.is_set()))
+
+    monkeypatch.setenv("WIIGHT_MQTT_USERNAME", "user")
+    monkeypatch.setenv("WIIGHT_MQTT_PASSWORD", "secret")
+    monkeypatch.setattr("wiight.mqtt.MqttPublisher", FakePublisher)
+    monkeypatch.setattr("wiight.daemon.DaemonService", FakeService)
+
+    result = CliRunner().invoke(
+        importlib.import_module("wiight.cli").main,
+        ["daemon", "--config", str(config_path)],
+    )
+
+    assert result.exit_code == 0
+    assert ("publisher", "user", "secret") in calls
+    assert ("service", "00:22:4C:60:0C:DB", 100) in calls
+    assert ("run", False) in calls

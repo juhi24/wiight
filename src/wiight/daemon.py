@@ -28,7 +28,13 @@ from wiight.worker import (
 
 
 class Publisher(Protocol):
+    def start(self) -> None: ...
+
     def publish(self, message: PublishMessage) -> None: ...
+
+    def flush(self, timeout: float = 5.0) -> None: ...
+
+    def stop(self, timeout: float = 5.0) -> None: ...
 
 
 class Worker(Protocol):
@@ -127,11 +133,16 @@ class DaemonService:
     def run(self, stop_event: Event) -> None:
         assert self.worker is not None
         identifier = device_id(self.config.board.address)
-        self.publisher.publish(discovery_message(self.config.mqtt, identifier))
-        self.publisher.publish(availability_message(self.config.mqtt, True))
-        self.engine.publish_status(board_connected=False)
-        self.worker.start()
+        publisher_started = False
+        worker_started = False
         try:
+            self.publisher.start()
+            publisher_started = True
+            self.publisher.publish(discovery_message(self.config.mqtt, identifier))
+            self.publisher.publish(availability_message(self.config.mqtt, True))
+            self.engine.publish_status(board_connected=False)
+            self.worker.start()
+            worker_started = True
             while not stop_event.is_set():
                 try:
                     event = self.worker.events.get(timeout=0.25)
@@ -139,9 +150,19 @@ class DaemonService:
                     continue
                 self.engine.handle(event)
         finally:
-            self.worker.stop()
-            self._drain_events()
-            self.publisher.publish(availability_message(self.config.mqtt, False))
+            try:
+                if worker_started:
+                    self.worker.stop()
+                    self._drain_events()
+            finally:
+                if publisher_started:
+                    try:
+                        self.publisher.publish(
+                            availability_message(self.config.mqtt, False)
+                        )
+                        self.publisher.flush()
+                    finally:
+                        self.publisher.stop()
 
     def _drain_events(self) -> None:
         assert self.worker is not None

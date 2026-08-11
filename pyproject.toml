@@ -25,6 +25,9 @@ dependencies = [
   "click",
 ]
 
+[project.optional-dependencies]
+mqtt = ["paho-mqtt>=2,<3"]
+
 [project.urls]
 Documentation = "https://github.com/juhi24/wiight#readme"
 Issues = "https://github.com/juhi24/wiight/issues"
