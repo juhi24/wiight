@@ -33,8 +33,8 @@ class FakeDevice:
     def Pair(self, *, timeout: float) -> None:
         self.calls.append(("Pair", timeout))
 
-    def Connect(self, *, timeout: float) -> None:
-        self.calls.append(("Connect", timeout))
+    def ConnectProfile(self, uuid: str, *, timeout: float) -> None:
+        self.calls.append(("ConnectProfile", uuid, timeout))
 
     def Get(self, interface: str, name: str) -> object:
         self.calls.append(("Get", interface, name))
@@ -216,8 +216,46 @@ def test_pair_balance_board_discovers_and_pairs_without_agent(monkeypatch) -> No
         ("Pair", 30.0),
         ("Set", bluezutils.DEVICE_INTERFACE, "Trusted", True),
         ("Get", bluezutils.DEVICE_INTERFACE, "Connected"),
-        ("Connect", 30.0),
+        ("ConnectProfile", bluezutils.HID_SERVICE_UUID, 30.0),
     ]
+
+
+def test_newly_paired_device_connects_hid_even_while_acl_is_connected(
+    monkeypatch,
+) -> None:
+    device = FakeDevice(paired=False, connected=True)
+    bus = FakeBus(device)
+    monkeypatch.setattr(bluezutils.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(bluezutils, "_dbus_module", lambda: FakeDbusModule)
+
+    bluezutils._pair_device(
+        bus, "/org/bluez/hci0/dev_11_22_33_44_55_66", 40.0
+    )
+
+    assert ("Pair", 30.0) in device.calls
+    assert (
+        "ConnectProfile",
+        bluezutils.HID_SERVICE_UUID,
+        30.0,
+    ) in device.calls
+
+
+def test_paired_disconnected_device_connects_hid_profile(monkeypatch) -> None:
+    device = FakeDevice(paired=True, connected=False)
+    bus = FakeBus(device)
+    monkeypatch.setattr(bluezutils.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(bluezutils, "_dbus_module", lambda: FakeDbusModule)
+
+    bluezutils._pair_device(
+        bus, "/org/bluez/hci0/dev_11_22_33_44_55_66", 40.0
+    )
+
+    assert ("Pair", 30.0) not in device.calls
+    assert device.calls[-1] == (
+        "ConnectProfile",
+        bluezutils.HID_SERVICE_UUID,
+        30.0,
+    )
 
 
 def test_pair_device_skips_pair_and_connect_when_already_active(monkeypatch) -> None:

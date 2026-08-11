@@ -9,6 +9,7 @@ ADAPTER_INTERFACE = SERVICE_NAME + ".Adapter1"
 DEVICE_INTERFACE = SERVICE_NAME + ".Device1"
 OBJECT_MANAGER_INTERFACE = "org.freedesktop.DBus.ObjectManager"
 PROPERTIES_INTERFACE = "org.freedesktop.DBus.Properties"
+HID_SERVICE_UUID = "00001124-0000-1000-8000-00805f9b34fb"
 
 ManagedObjects = Mapping[str, Mapping[str, Mapping[str, Any]]]
 
@@ -224,8 +225,9 @@ def _pair_device(bus: Any, device_path: str, deadline: float) -> None:
         device.Pair(timeout=_remaining(deadline))
     properties.Set(DEVICE_INTERFACE, "Trusted", dbus.Boolean(True))
     connected = bool(properties.Get(DEVICE_INTERFACE, "Connected"))
-    if not connected:
-        device.Connect(timeout=_remaining(deadline))
+    # Pair() exposes its ACL as connected before the Wii HID channels are open.
+    if not paired or not connected:
+        device.ConnectProfile(HID_SERVICE_UUID, timeout=_remaining(deadline))
 
 
 def _remaining(deadline: float) -> float:
