@@ -135,6 +135,12 @@ def patch_hardware(monkeypatch, events) -> None:
         yield object()
 
     monkeypatch.setattr(hardware, "open_balance_board", fake_open)
+    def find_configured(address, adapter):
+        assert address == "00:22:4C:60:0C:DB"
+        assert adapter is None
+        return "/device"
+
+    monkeypatch.setattr(hardware, "find_configured_balance_board_path", find_configured)
     monkeypatch.setattr(
         hardware,
         "capture_events",
@@ -226,3 +232,48 @@ def test_measure_continuous_outputs_each_rearmed_measurement(
         1.0,
         1.2,
     ]
+
+
+def test_tare_explicit_device_bypasses_configured_discovery(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_path = tmp_path / "wiight.toml"
+    calibration_path = tmp_path / "calibration.json"
+    write_config(config_path, calibration_path)
+
+    @contextmanager
+    def fake_open(device):
+        assert device == "/explicit-device"
+        yield object()
+
+    monkeypatch.setattr(hardware, "open_balance_board", fake_open)
+    monkeypatch.setattr(
+        hardware,
+        "find_configured_balance_board_path",
+        lambda *args: (_ for _ in ()).throw(AssertionError("unexpected discovery")),
+    )
+    monkeypatch.setattr(
+        hardware,
+        "capture_events",
+        lambda *args, **kwargs: (
+            event
+            for event in [
+                captured_event(1, 10),
+                captured_event(2, 11),
+                captured_event(3, 12),
+            ]
+        ),
+    )
+
+    result = CliRunner().invoke(
+        importlib.import_module("wiight.cli").main,
+        [
+            "tare",
+            "--config",
+            str(config_path),
+            "--device",
+            "/explicit-device",
+        ],
+    )
+
+    assert result.exit_code == 0

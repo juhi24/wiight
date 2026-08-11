@@ -23,6 +23,14 @@ class DeviceNotFoundError(BlueZLookupError):
     pass
 
 
+class DeviceNotConnectedError(BlueZLookupError):
+    pass
+
+
+class BlueZUnavailableError(BlueZLookupError):
+    pass
+
+
 def _dbus_module():
     import dbus  # type: ignore[import-untyped]
 
@@ -34,12 +42,15 @@ def _system_bus():
 
 
 def get_managed_objects(bus=None) -> ManagedObjects:
-    if bus is None:
-        bus = _system_bus()
-    manager = _dbus_module().Interface(
-        bus.get_object(SERVICE_NAME, "/"), OBJECT_MANAGER_INTERFACE
-    )
-    return manager.GetManagedObjects()
+    try:
+        if bus is None:
+            bus = _system_bus()
+        manager = _dbus_module().Interface(
+            bus.get_object(SERVICE_NAME, "/"), OBJECT_MANAGER_INTERFACE
+        )
+        return manager.GetManagedObjects()
+    except Exception as error:
+        raise BlueZUnavailableError(f"could not query BlueZ: {error}") from error
 
 
 def find_adapter_path(objects: ManagedObjects, pattern: str | None = None) -> str:
@@ -73,6 +84,20 @@ def find_device_path(
         if adapter_path is None or path.startswith(adapter_path + "/"):
             return path
     raise DeviceNotFoundError(f"Bluetooth device {device_address} not found")
+
+
+def find_connected_device_path(
+    objects: ManagedObjects,
+    device_address: str,
+    adapter_pattern: str | None = None,
+) -> str:
+    path = find_device_path(objects, device_address, adapter_pattern)
+    device = objects[path][DEVICE_INTERFACE]
+    if not bool(device.get("Connected", False)):
+        raise DeviceNotConnectedError(
+            f"Bluetooth device {device_address} is not connected"
+        )
+    return path
 
 
 def find_adapter(pattern: str | None = None, bus=None):

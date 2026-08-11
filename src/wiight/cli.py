@@ -118,13 +118,21 @@ def tare(
     """Tare an unloaded board and persist its corner offsets."""
     from wiight.calibration import CalibrationStoreError, store_calibration
     from wiight.config import ConfigError, load_config
-    from wiight.hardware import BalanceBoardError, capture_events, open_balance_board
+    from wiight.hardware import (
+        BalanceBoardError,
+        capture_events,
+        find_configured_balance_board_path,
+        open_balance_board,
+    )
     from wiight.measurement import CalibrationError
     from wiight.session import calculate_tare
 
     try:
         config = load_config(config_path)
-        with open_balance_board(device) as interface:
+        device_path = device or find_configured_balance_board_path(
+            config.board.address, config.board.adapter
+        )
+        with open_balance_board(device_path) as interface:
             events = capture_events(
                 interface, duration=duration, idle_timeout=idle_timeout
             )
@@ -182,7 +190,12 @@ def measure(
     """Measure stable weight using the persisted tare calibration."""
     from wiight.calibration import CalibrationStoreError, load_calibration
     from wiight.config import ConfigError, load_config
-    from wiight.hardware import BalanceBoardError, capture_events, open_balance_board
+    from wiight.hardware import (
+        BalanceBoardError,
+        capture_events,
+        find_configured_balance_board_path,
+        open_balance_board,
+    )
     from wiight.measurement import centikilograms_to_kilograms
     from wiight.session import MeasurementTimeoutError, measure_once, stable_measurements
 
@@ -207,7 +220,10 @@ def measure(
     try:
         config = load_config(config_path)
         stored = load_calibration(config.calibration.path, config.board.address)
-        with open_balance_board(device) as interface:
+        device_path = device or find_configured_balance_board_path(
+            config.board.address, config.board.adapter
+        )
+        with open_balance_board(device_path) as interface:
             events = capture_events(
                 interface, duration=timeout, idle_timeout=idle_timeout
             )

@@ -89,10 +89,12 @@ Use `--json` for machine-readable JSON Lines. Use `--continuous` to emit another
 measurement after the board has been unloaded and occupied again. `--timeout`
 and `--idle-timeout` bound the session and event wait respectively.
 
-Tare and measurement currently operate on the single connected balance board,
-or the explicit xwiimote path supplied with `--device`. Matching that device to
-the configured Bluetooth address is reserved for the connection state-machine
-milestone.
+By default, tare and measurement require the configured Bluetooth address to be
+connected in BlueZ, optionally scoped to the configured adapter, and require
+exactly one balance board to be available through xwiimote. If multiple boards
+are connected, provide the intended xwiimote sysfs path with `--device`.
+Supplying `--device` is an explicit diagnostic override and bypasses configured
+Bluetooth-address matching.
 
 ## Capture
 

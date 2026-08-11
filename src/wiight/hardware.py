@@ -7,8 +7,10 @@ from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from math import ceil
+from threading import Event
 from typing import Any
 
+from wiight import bluezutils
 from wiight.measurement import CornerReading
 
 
@@ -55,15 +57,7 @@ def _xwiimote_module():
 
 
 def find_balance_board_path() -> str:
-    xwiimote = _xwiimote_module()
-    monitor = xwiimote.monitor(True, True)
-    matches = []
-    path = monitor.poll()
-    while path is not None:
-        if xwiimote.iface(path).get_devtype() == "balanceboard":
-            matches.append(path)
-        path = monitor.poll()
-
+    matches = _find_balance_board_paths()
     if not matches:
         raise BalanceBoardNotFoundError("no connected balance board found")
     if len(matches) > 1:
@@ -73,18 +67,102 @@ def find_balance_board_path() -> str:
     return matches[0]
 
 
+def _find_balance_board_paths() -> list[str]:
+    xwiimote = _xwiimote_module()
+    monitor = xwiimote.monitor(True, True)
+    matches: list[str] = []
+    path = monitor.poll()
+    while path is not None:
+        if xwiimote.iface(path).get_devtype() == "balanceboard":
+            matches.append(path)
+        path = monitor.poll()
+    return matches
+
+
+def find_configured_balance_board_path(
+    board_address: str,
+    adapter_pattern: str | None = None,
+    bus: Any | None = None,
+) -> str:
+    try:
+        objects = bluezutils.get_managed_objects(bus)
+        bluezutils.find_connected_device_path(
+            objects, board_address, adapter_pattern
+        )
+    except bluezutils.BlueZLookupError as error:
+        raise BalanceBoardNotFoundError(str(error)) from error
+    except (ImportError, OSError) as error:
+        raise BalanceBoardError(f"could not query BlueZ: {error}") from error
+
+    matches = _find_balance_board_paths()
+    if not matches:
+        raise BalanceBoardNotFoundError(
+            f"configured board {board_address} is connected in BlueZ but not available "
+            "through xwiimote"
+        )
+    if len(matches) > 1:
+        raise BalanceBoardNotFoundError(
+            "multiple xwiimote balance boards are connected; specify --device"
+        )
+    return matches[0]
+
+
+class BalanceBoardReader:
+    def __init__(self, device_path: str) -> None:
+        self.device_path = device_path
+        self._interface: Any | None = None
+        self._interface_mask: int | None = None
+
+    @property
+    def is_open(self) -> bool:
+        return self._interface is not None
+
+    @property
+    def interface(self) -> Any:
+        if self._interface is None:
+            raise BalanceBoardError("balance board reader is not open")
+        return self._interface
+
+    def __enter__(self) -> BalanceBoardReader:
+        if self._interface is not None:
+            raise BalanceBoardError("balance board reader is already open")
+        xwiimote = _xwiimote_module()
+        interface = xwiimote.iface(self.device_path)
+        if interface.get_devtype() != "balanceboard":
+            raise BalanceBoardNotFoundError("selected device is not a balance board")
+        interface_mask = xwiimote.IFACE_BALANCE_BOARD
+        interface.open(interface_mask)
+        self._interface = interface
+        self._interface_mask = interface_mask
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        interface = self._interface
+        interface_mask = self._interface_mask
+        self._interface = None
+        self._interface_mask = None
+        if interface is not None and interface_mask is not None:
+            interface.close(interface_mask)
+
+    def capture_events(
+        self,
+        *,
+        duration: float,
+        idle_timeout: float,
+        stop_event: Event | None = None,
+    ) -> Generator[CapturedEvent, None, None]:
+        yield from capture_events(
+            self.interface,
+            duration=duration,
+            idle_timeout=idle_timeout,
+            stop_event=stop_event,
+        )
+
+
 @contextmanager
 def open_balance_board(device_path: str | None = None) -> Iterator[Any]:
-    xwiimote = _xwiimote_module()
-    interface = xwiimote.iface(device_path or find_balance_board_path())
-    if interface.get_devtype() != "balanceboard":
-        raise BalanceBoardNotFoundError("selected device is not a balance board")
-
-    interface.open(xwiimote.IFACE_BALANCE_BOARD)
-    try:
-        yield interface
-    finally:
-        interface.close(xwiimote.IFACE_BALANCE_BOARD)
+    with BalanceBoardReader(device_path or find_balance_board_path()) as reader:
+        yield reader.interface
 
 
 def _corner_reading(event: Any) -> CornerReading:
@@ -101,29 +179,50 @@ def capture_events(
     *,
     duration: float,
     idle_timeout: float,
+    stop_event: Event | None = None,
 ) -> Generator[CapturedEvent, None, None]:
     xwiimote = _xwiimote_module()
     poller = select.poll()
     file_descriptor = interface.get_fd()
     poller.register(file_descriptor, select.POLLIN)
-    deadline = time.monotonic() + duration
+    started_at = time.monotonic()
+    deadline = started_at + duration
+    idle_deadline = started_at + idle_timeout
 
     try:
         while True:
-            remaining = deadline - time.monotonic()
+            if stop_event is not None and stop_event.is_set():
+                return
+            now = time.monotonic()
+            remaining = deadline - now
             if remaining <= 0:
                 return
-            wait_seconds = min(remaining, idle_timeout)
-            if not poller.poll(max(1, ceil(wait_seconds * 1000))):
-                if time.monotonic() >= deadline:
-                    return
+            idle_remaining = idle_deadline - now
+            if idle_remaining <= 0:
                 raise CaptureIdleTimeoutError(
                     f"no xwiimote events received for {idle_timeout:g} seconds"
                 )
+            wait_seconds = min(
+                remaining,
+                idle_remaining,
+                0.25 if stop_event is not None else idle_timeout,
+            )
+            if not poller.poll(max(1, ceil(wait_seconds * 1000))):
+                if stop_event is not None and stop_event.is_set():
+                    return
+                now = time.monotonic()
+                if now >= deadline:
+                    return
+                if now >= idle_deadline:
+                    raise CaptureIdleTimeoutError(
+                        f"no xwiimote events received for {idle_timeout:g} seconds"
+                    )
+                continue
 
             event = xwiimote.event()
             interface.dispatch(event)
             monotonic_time = time.monotonic()
+            idle_deadline = monotonic_time + idle_timeout
             corners = (
                 _corner_reading(event)
                 if event.type == xwiimote.EVENT_BALANCE_BOARD
