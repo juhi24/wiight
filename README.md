@@ -113,6 +113,16 @@ total. Sensor values are centikilograms.
 Capture files can contain personal weight data. Do not commit them unless they
 have been intentionally anonymized for use as test fixtures.
 
+## Service Status
+
+The service core now runs hardware access behind a dedicated worker contract
+with bounded sample buffering, cooperative shutdown, reconnect errors, and
+stable-measurement processing in the service thread. MQTT topic, payload,
+retention, availability, and Home Assistant discovery contracts are implemented
+without retaining personal weight measurements. The network client and
+`wiight daemon` command are the next deployment milestone and are not yet
+available.
+
 ## License
 
 `wiight` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.

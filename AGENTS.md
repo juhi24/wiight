@@ -16,6 +16,9 @@ Read [README.md](README.md) for user-facing installation information and [pyproj
 - [src/wiight/measurement.py](src/wiight/measurement.py) owns hardware-independent calibration and stable-weight calculations.
 - [src/wiight/session.py](src/wiight/session.py) owns hardware-independent orchestration from captured events to tare and stable measurements.
 - [src/wiight/hardware.py](src/wiight/hardware.py) owns configured board discovery, xwiimote interface lifecycle, cancellable event capture, and hardware errors.
+- [src/wiight/worker.py](src/wiight/worker.py) owns the hardware thread, bounded sample mailbox, retry, and immutable worker lifecycle events.
+- [src/wiight/daemon.py](src/wiight/daemon.py) owns service state, stable-measurement detection from worker samples, and publication orchestration.
+- [src/wiight/mqtt.py](src/wiight/mqtt.py) owns transport-independent MQTT topics, payloads, retain policy, and Home Assistant discovery.
 - [src/wiight/cli.py](src/wiight/cli.py) owns the `wiight` Click command group and presentation formats.
 - [src/wiight/config.py](src/wiight/config.py) owns strict TOML loading and service configuration validation.
 - [src/wiight/calibration.py](src/wiight/calibration.py) owns versioned, board-bound, atomic tare persistence.
