@@ -7,6 +7,7 @@ from wiight.config import BoardConfig, MqttConfig, ServiceConfig
 from wiight.daemon import DaemonEngine, DaemonService, DaemonState
 from wiight.mqtt import PairCommand, PublishMessage
 from wiight.worker import (
+    WorkerDisconnected,
     WorkerError,
     WorkerMailbox,
     WorkerSample,
@@ -61,6 +62,10 @@ def test_daemon_tracks_worker_lifecycle() -> None:
     daemon.handle(WorkerStarted(0, "/device"))
     assert daemon.state is DaemonState.MEASURING
     assert json.loads(publisher.messages[-1].payload)["board_connected"] is True
+
+    daemon.handle(WorkerDisconnected(0.5))
+    assert daemon.state is DaemonState.WAITING_FOR_BOARD
+    assert json.loads(publisher.messages[-1].payload)["board_connected"] is False
 
     daemon.handle(WorkerError(1, "lost board"))
     assert daemon.state is DaemonState.DEGRADED
@@ -121,6 +126,7 @@ class FakeWorker:
         self.events = WorkerMailbox(16)
         self.stop_event = stop_event
         self.started = False
+        self.disconnected = False
         self.stopped = False
 
     def start(self) -> None:
@@ -136,6 +142,9 @@ class FakeWorker:
                     ),
                 )
             )
+
+    def disconnect(self) -> None:
+        self.disconnected = True
         self.stop_event.set()
 
     def stop(self, timeout: float = 5.0) -> None:
@@ -172,7 +181,7 @@ def test_daemon_service_publishes_startup_measurement_and_offline_shutdown() -> 
 
     service.run(stop_event)
 
-    assert worker.started and worker.stopped
+    assert worker.started and worker.disconnected and worker.stopped
     assert publisher.started and publisher.flushed and publisher.stopped
     assert publisher.messages[0].topic.endswith("/config")
     assert publisher.messages[1].payload == "online"

@@ -163,6 +163,11 @@ offline update before disconnecting. Corner samples are not published. Hardware
 access runs in a dedicated worker with bounded sample buffering, while stable
 measurement detection and publishing remain in the service thread.
 
+After publishing a stable weight, the service closes the xwiimote interface and
+asks BlueZ to disconnect the board to conserve its batteries. The service stays
+online and waits for the paired board to reconnect when its front button is
+pressed.
+
 Home Assistant discovery includes a Pair button. Press the balance board's red
 sync button, then press Pair within 30 seconds. The same operation can be
 requested by publishing the exact payload `PAIR` at QoS 1, without retain, to

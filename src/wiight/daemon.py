@@ -22,6 +22,7 @@ from wiight.mqtt import (
 )
 from wiight.worker import (
     HardwareWorker,
+    WorkerDisconnected,
     WorkerError,
     WorkerEvent,
     WorkerMailbox,
@@ -47,6 +48,8 @@ class Worker(Protocol):
     events: WorkerMailbox
 
     def start(self) -> None: ...
+
+    def disconnect(self) -> None: ...
 
     def stop(self, timeout: float = 5.0) -> None: ...
 
@@ -94,7 +97,7 @@ class DaemonEngine:
             self.calibration or zero_calibration(),
         )
 
-    def handle(self, event: WorkerEvent) -> None:
+    def handle(self, event: WorkerEvent) -> bool:
         if isinstance(event, WorkerStarted):
             self.state = DaemonState.MEASURING
             self._publish_status(board_connected=True)
@@ -108,12 +111,18 @@ class DaemonEngine:
                         measured_at=datetime.fromtimestamp(event.wall_time, UTC),
                     )
                 )
+                return True
+        elif isinstance(event, WorkerDisconnected):
+            self.detector.reset()
+            self.state = DaemonState.WAITING_FOR_BOARD
+            self._publish_status(board_connected=False)
         elif isinstance(event, WorkerError):
             self.state = DaemonState.DEGRADED
             self._publish_status(board_connected=False, error=event.message)
         elif isinstance(event, WorkerStopped):
             self.state = DaemonState.STOPPED
             self._publish_status(board_connected=False)
+        return False
 
     def _publish_status(
         self, *, board_connected: bool, error: str | None = None
@@ -178,7 +187,8 @@ class DaemonService:
                     event = self.worker.events.get(timeout=0.25)
                 except Empty:
                     continue
-                self.engine.handle(event)
+                if self.engine.handle(event):
+                    self.worker.disconnect()
         finally:
             try:
                 if worker_started:

@@ -133,6 +133,23 @@ def find_device(
     )
 
 
+def disconnect_device(
+    device_address: str, adapter_pattern: str | None = None, bus=None
+) -> None:
+    try:
+        bus = bus or _system_bus()
+        device = find_device_in_objects(
+            get_managed_objects(bus), device_address, adapter_pattern, bus
+        )
+        device.Disconnect()
+    except BlueZLookupError:
+        raise
+    except Exception as error:
+        raise BlueZUnavailableError(
+            f"could not disconnect Bluetooth device {device_address}: {error}"
+        ) from error
+
+
 def find_device_in_objects(
     objects: ManagedObjects,
     device_address: str,

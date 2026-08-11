@@ -10,8 +10,10 @@ from threading import Condition, Event, Thread
 from wiight.config import BoardConfig
 from wiight.hardware import (
     BalanceBoardError,
+    BalanceBoardNotFoundError,
     BalanceBoardReader,
     CapturedEvent,
+    disconnect_configured_balance_board,
     find_configured_balance_board_path,
 )
 from wiight.measurement import SensorSample
@@ -29,6 +31,11 @@ class WorkerStopped:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkerDisconnected:
+    monotonic_time: float
+
+
+@dataclass(frozen=True, slots=True)
 class WorkerError:
     monotonic_time: float
     message: str
@@ -40,7 +47,9 @@ class WorkerSample:
     sample: SensorSample
 
 
-WorkerEvent = WorkerStarted | WorkerStopped | WorkerError | WorkerSample
+WorkerEvent = (
+    WorkerStarted | WorkerDisconnected | WorkerStopped | WorkerError | WorkerSample
+)
 
 
 class WorkerMailbox:
@@ -59,7 +68,9 @@ class WorkerMailbox:
             self._condition.notify()
             return True
 
-    def put_control(self, event: WorkerStarted | WorkerStopped | WorkerError) -> int:
+    def put_control(
+        self, event: WorkerStarted | WorkerDisconnected | WorkerStopped | WorkerError
+    ) -> int:
         dropped = 0
         with self._condition:
             if len(self._events) >= self.maxsize:
@@ -110,6 +121,9 @@ class HardwareWorker:
         event_queue: WorkerMailbox | None = None,
         stop_event: Event | None = None,
         discover: Callable[[str, str | None], str] = find_configured_balance_board_path,
+        disconnect: Callable[
+            [str, str | None], None
+        ] = disconnect_configured_balance_board,
         reader_factory: Callable[[str], BalanceBoardReader] = BalanceBoardReader,
     ) -> None:
         self.board = board
@@ -117,8 +131,11 @@ class HardwareWorker:
         self.events = event_queue or WorkerMailbox(config.queue_size)
         self.stop_event = stop_event or Event()
         self._discover = discover
+        self._disconnect = disconnect
         self._reader_factory = reader_factory
         self._thread = Thread(target=self._run, name="wiight-hardware", daemon=True)
+        self._disconnect_event = Event()
+        self._waiting_for_reconnect = False
         self._dropped_samples = 0
 
     @property
@@ -132,29 +149,50 @@ class HardwareWorker:
     def start(self) -> None:
         self._thread.start()
 
+    def disconnect(self) -> None:
+        self._disconnect_event.set()
+
     def stop(self, timeout: float = 5.0) -> None:
         self.stop_event.set()
+        self._disconnect_event.set()
         if self._thread.ident is not None:
             self._thread.join(timeout)
         if self._thread.is_alive():
             raise TimeoutError("hardware worker did not stop within the deadline")
 
     def run_once(self) -> None:
+        self._disconnect_event.clear()
+        if self.stop_event.is_set():
+            return
         device_path = self._discover(self.board.address, self.board.adapter)
+        self._waiting_for_reconnect = False
         self._put_control(WorkerStarted(time.monotonic(), device_path))
         with self._reader_factory(device_path) as reader:
             for event in reader.capture_events(
                 duration=self.config.capture_duration,
                 idle_timeout=self.config.idle_timeout,
-                stop_event=self.stop_event,
+                stop_event=self._disconnect_event,
             ):
                 self._put_sample(event)
+        if self._disconnect_event.is_set() and not self.stop_event.is_set():
+            self._waiting_for_reconnect = True
+            self._disconnect(self.board.address, self.board.adapter)
+            self._put_control(WorkerDisconnected(time.monotonic()))
 
     def _run(self) -> None:
         try:
             while not self.stop_event.is_set():
                 try:
                     self.run_once()
+                    if self._waiting_for_reconnect and self.stop_event.wait(
+                        self.config.retry_delay
+                    ):
+                        break
+                except BalanceBoardNotFoundError as error:
+                    if not self._waiting_for_reconnect:
+                        self._put_control(WorkerError(time.monotonic(), str(error)))
+                    if self.stop_event.wait(self.config.retry_delay):
+                        break
                 except BalanceBoardError as error:
                     self._put_control(WorkerError(time.monotonic(), str(error)))
                     if self.stop_event.wait(self.config.retry_delay):
@@ -177,5 +215,8 @@ class HardwareWorker:
         if not self.events.put_sample(message):
             self._dropped_samples += 1
 
-    def _put_control(self, event: WorkerStarted | WorkerStopped | WorkerError) -> None:
+    def _put_control(
+        self,
+        event: WorkerStarted | WorkerDisconnected | WorkerStopped | WorkerError,
+    ) -> None:
         self._dropped_samples += self.events.put_control(event)

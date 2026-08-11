@@ -107,6 +107,18 @@ def find_configured_balance_board_path(
     return matches[0]
 
 
+def disconnect_configured_balance_board(
+    board_address: str,
+    adapter_pattern: str | None = None,
+) -> None:
+    try:
+        bluezutils.disconnect_device(board_address, adapter_pattern)
+    except bluezutils.BlueZLookupError as error:
+        raise BalanceBoardError(str(error)) from error
+    except (ImportError, OSError) as error:
+        raise BalanceBoardError(f"could not query BlueZ: {error}") from error
+
+
 class BalanceBoardReader:
     def __init__(self, device_path: str) -> None:
         self.device_path = device_path

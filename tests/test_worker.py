@@ -5,10 +5,11 @@ from threading import Event
 
 from wiight import CornerReading
 from wiight.config import BoardConfig
-from wiight.hardware import BalanceBoardError, CapturedEvent
+from wiight.hardware import BalanceBoardError, BalanceBoardNotFoundError, CapturedEvent
 from wiight.worker import (
     HardwareWorker,
     WorkerConfig,
+    WorkerDisconnected,
     WorkerError,
     WorkerMailbox,
     WorkerSample,
@@ -58,6 +59,57 @@ def test_worker_run_once_emits_lifecycle_and_samples() -> None:
     assert isinstance(worker.events.get_nowait(), WorkerSample)
     assert isinstance(worker.events.get_nowait(), WorkerSample)
     assert reader.closed
+
+
+def test_worker_disconnect_closes_reader_then_disconnects_bluez() -> None:
+    reader = FakeReader("/device", [captured(1), captured(2)])
+    disconnect_calls: list[tuple[str, str | None, bool]] = []
+    worker: HardwareWorker
+
+    def capture_events(**kwargs):
+        yield captured(1)
+        worker.disconnect()
+        if not kwargs["stop_event"].is_set():
+            yield captured(2)
+
+    reader.capture_events = capture_events
+
+    def disconnect(address: str, adapter: str | None) -> None:
+        disconnect_calls.append((address, adapter, reader.closed))
+
+    worker = HardwareWorker(
+        BoardConfig("00:22:4C:60:0C:DB", adapter="hci0"),
+        discover=lambda address, adapter: "/device",
+        disconnect=disconnect,
+        reader_factory=lambda path: reader,
+    )
+
+    worker.run_once()
+
+    assert isinstance(worker.events.get_nowait(), WorkerStarted)
+    assert isinstance(worker.events.get_nowait(), WorkerSample)
+    assert isinstance(worker.events.get_nowait(), WorkerDisconnected)
+    assert disconnect_calls == [("00:22:4C:60:0C:DB", "hci0", True)]
+
+
+def test_worker_quietly_waits_when_intentionally_disconnected() -> None:
+    stop_event = Event()
+
+    def discover(address: str, adapter: str | None) -> str:
+        stop_event.set()
+        raise BalanceBoardNotFoundError("board unavailable")
+
+    worker = HardwareWorker(
+        BoardConfig("00:22:4C:60:0C:DB"),
+        stop_event=stop_event,
+        discover=discover,
+    )
+    worker._waiting_for_reconnect = True
+
+    worker._run()
+
+    assert isinstance(worker.events.get_nowait(), WorkerStopped)
+    assert worker.events.qsize() == 0
 
 
 def test_worker_drops_samples_when_bounded_queue_is_full() -> None:

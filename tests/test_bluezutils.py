@@ -36,6 +36,9 @@ class FakeDevice:
     def ConnectProfile(self, uuid: str, *, timeout: float) -> None:
         self.calls.append(("ConnectProfile", uuid, timeout))
 
+    def Disconnect(self) -> None:
+        self.calls.append(("Disconnect",))
+
     def Get(self, interface: str, name: str) -> object:
         self.calls.append(("Get", interface, name))
         return self.properties[name]
@@ -119,6 +122,17 @@ def test_find_paths_raise_specific_errors() -> None:
         assert "00:00:00:00:00:00" in str(error)
     else:
         raise AssertionError("missing device should raise DeviceNotFoundError")
+
+
+def test_disconnect_device_calls_configured_bluez_device(monkeypatch) -> None:
+    device = FakeDevice(paired=True, connected=True)
+    bus = FakeBus(device)
+    monkeypatch.setattr(bluezutils, "get_managed_objects", lambda current_bus: OBJECTS)
+    monkeypatch.setattr(bluezutils, "_dbus_module", lambda: FakeDbusModule)
+
+    bluezutils.disconnect_device("11:22:33:44:55:66", "hci0", bus)
+
+    assert device.calls == [("Disconnect",)]
 
 
 def test_get_managed_objects_wraps_bluez_failure(monkeypatch) -> None:
