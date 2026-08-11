@@ -1,20 +1,14 @@
 from __future__ import annotations
 
-import importlib
 import time
 from collections.abc import Mapping
-from contextlib import contextmanager
-from threading import Thread
 from typing import Any
 
 SERVICE_NAME = "org.bluez"
 ADAPTER_INTERFACE = SERVICE_NAME + ".Adapter1"
 DEVICE_INTERFACE = SERVICE_NAME + ".Device1"
 OBJECT_MANAGER_INTERFACE = "org.freedesktop.DBus.ObjectManager"
-AGENT_INTERFACE = SERVICE_NAME + ".Agent1"
-AGENT_MANAGER_INTERFACE = SERVICE_NAME + ".AgentManager1"
 PROPERTIES_INTERFACE = "org.freedesktop.DBus.Properties"
-PAIRING_AGENT_PATH = "/org/wiight/pairing_agent"
 
 ManagedObjects = Mapping[str, Mapping[str, Mapping[str, Any]]]
 
@@ -51,11 +45,6 @@ def _dbus_module():
 
 def _system_bus():
     return _dbus_module().SystemBus()
-
-
-def _pairing_bus():
-    mainloop = importlib.import_module("dbus.mainloop.glib")
-    return _dbus_module().SystemBus(mainloop=mainloop.DBusGMainLoop())
 
 
 def get_managed_objects(bus=None) -> ManagedObjects:
@@ -167,15 +156,15 @@ def pair_balance_board(
         raise ValueError("pairing timeout must be positive")
     deadline = time.monotonic() + timeout
     try:
-        bus = bus or _pairing_bus()
+        bus = bus or _system_bus()
         objects = get_managed_objects(bus)
         adapter_path = find_adapter_path(objects, adapter_pattern)
         adapter = find_adapter_in_objects(objects, adapter_pattern, bus)
         device_path = _discover_device_path(
             bus, adapter, device_address, adapter_path, deadline
         )
-        with _pairing_agent(bus, device_path):
-            _pair_device(bus, device_path, deadline)
+        # Nintendo's binary BDADDR PIN must be supplied by BlueZ's autopair plugin.
+        _pair_device(bus, device_path, deadline)
         return device_path
     except BlueZPairingError:
         raise
@@ -223,75 +212,6 @@ def _discover_device_path(
                 adapter.StopDiscovery()
             except _dbus_module().DBusException:
                 pass
-
-
-@contextmanager
-def _pairing_agent(bus: Any, device_path: str):
-    dbus: Any = _dbus_module()
-    service: Any = importlib.import_module("dbus.service")
-    glib = importlib.import_module("gi.repository.GLib")
-
-    class Rejected(dbus.DBusException):
-        _dbus_error_name = "org.bluez.Error.Rejected"
-
-    class PairingAgent(service.Object):
-        def _require_device(self, requested_path: str) -> None:
-            if requested_path != device_path:
-                raise Rejected("pairing is restricted to the configured balance board")
-
-        @service.method(AGENT_INTERFACE, in_signature="", out_signature="")
-        def Release(self) -> None:
-            pass
-
-        @service.method(AGENT_INTERFACE, in_signature="o", out_signature="s")
-        def RequestPinCode(self, requested_path: str) -> str:
-            self._require_device(requested_path)
-            raise Rejected(
-                "BlueZ requested an interactive PIN; ensure its autopair plugin "
-                "is enabled for Nintendo RVL-WBC-01 devices"
-            )
-
-        @service.method(AGENT_INTERFACE, in_signature="o", out_signature="u")
-        def RequestPasskey(self, requested_path: str) -> int:
-            self._require_device(requested_path)
-            raise Rejected("interactive passkeys are not supported")
-
-        @service.method(AGENT_INTERFACE, in_signature="ou", out_signature="")
-        def RequestConfirmation(self, requested_path: str, passkey: int) -> None:
-            self._require_device(requested_path)
-
-        @service.method(AGENT_INTERFACE, in_signature="o", out_signature="")
-        def RequestAuthorization(self, requested_path: str) -> None:
-            self._require_device(requested_path)
-
-        @service.method(AGENT_INTERFACE, in_signature="os", out_signature="")
-        def AuthorizeService(self, requested_path: str, uuid: str) -> None:
-            self._require_device(requested_path)
-
-        @service.method(AGENT_INTERFACE, in_signature="", out_signature="")
-        def Cancel(self) -> None:
-            pass
-
-    agent = PairingAgent(bus, PAIRING_AGENT_PATH)
-    manager_object = bus.get_object(SERVICE_NAME, "/org/bluez")
-    manager = dbus.Interface(manager_object, AGENT_MANAGER_INTERFACE)
-    loop = glib.MainLoop()
-    loop_thread = Thread(target=loop.run, name="wiight-pairing-agent", daemon=True)
-    loop_thread.start()
-    registered = False
-    try:
-        manager.RegisterAgent(PAIRING_AGENT_PATH, "NoInputNoOutput")
-        registered = True
-        yield
-    finally:
-        if registered:
-            try:
-                manager.UnregisterAgent(PAIRING_AGENT_PATH)
-            except dbus.DBusException:
-                pass
-        agent.remove_from_connection()
-        loop.quit()
-        loop_thread.join(1.0)
 
 
 def _pair_device(bus: Any, device_path: str, deadline: float) -> None:

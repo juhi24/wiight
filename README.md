@@ -83,10 +83,10 @@ wiight pair --config /etc/wiight/wiight.toml
 
 Discovery and pairing share a 30-second deadline by default; use `--timeout` to
 change it. The command is restricted to the configured board address and
-adapter. It uses the same temporary `NoInputNoOutput` agent as MQTT pairing, so
-an unexpected PIN or passkey request is rejected rather than shown
-interactively. BlueZ's built-in Wii autopair plugin must be enabled to supply
-the balance board's binary PIN.
+adapter. Wiight deliberately does not register a pairing agent because the
+Nintendo PIN contains binary adapter-address bytes that cannot be represented
+reliably by the Agent1 string API. BlueZ's built-in Wii autopair plugin must be
+enabled to supply that PIN.
 
 ## Calibration
 
@@ -172,11 +172,9 @@ status is published to `wiight/scale/pair/status` with the states `idle`,
 
 Pairing is restricted to the configured board address and adapter. BlueZ's
 built-in `autopair` plugin recognizes `Nintendo RVL-WBC-01` and supplies the
-adapter address as the Wii protocol's binary PIN. During each request, wiight
-registers a `NoInputNoOutput` agent that rejects PIN and passkey prompts. This
-prevents a headless service from hanging or displaying an interactive prompt;
-if the BlueZ autopair plugin is unavailable, pairing fails with a diagnostic.
-Restrict publish access to the pair command topic with broker ACLs.
+adapter address as the Wii protocol's binary PIN. Wiight does not register an
+Agent1 because its string return value cannot safely carry that PIN. Restrict
+publish access to the pair command topic with broker ACLs.
 
 ## Raspberry Pi Deployment
 
