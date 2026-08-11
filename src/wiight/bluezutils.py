@@ -1,47 +1,114 @@
-import dbus
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
 
 SERVICE_NAME = "org.bluez"
 ADAPTER_INTERFACE = SERVICE_NAME + ".Adapter1"
 DEVICE_INTERFACE = SERVICE_NAME + ".Device1"
+OBJECT_MANAGER_INTERFACE = "org.freedesktop.DBus.ObjectManager"
 
-def get_managed_objects():
-    bus = dbus.SystemBus()
-    manager = dbus.Interface(bus.get_object("org.bluez", "/"),
-                "org.freedesktop.DBus.ObjectManager")
+ManagedObjects = Mapping[str, Mapping[str, Mapping[str, Any]]]
+
+
+class BlueZLookupError(LookupError):
+    pass
+
+
+class AdapterNotFoundError(BlueZLookupError):
+    pass
+
+
+class DeviceNotFoundError(BlueZLookupError):
+    pass
+
+
+def _dbus_module():
+    import dbus  # type: ignore[import-untyped]
+
+    return dbus
+
+
+def _system_bus():
+    return _dbus_module().SystemBus()
+
+
+def get_managed_objects(bus=None) -> ManagedObjects:
+    if bus is None:
+        bus = _system_bus()
+    manager = _dbus_module().Interface(
+        bus.get_object(SERVICE_NAME, "/"), OBJECT_MANAGER_INTERFACE
+    )
     return manager.GetManagedObjects()
 
-def find_adapter(pattern=None):
-    return find_adapter_in_objects(get_managed_objects(), pattern)
 
-def find_adapter_in_objects(objects, pattern=None):
-    bus = dbus.SystemBus()
-    for path, ifaces in objects.items():
-        adapter = ifaces.get(ADAPTER_INTERFACE)
+def find_adapter_path(objects: ManagedObjects, pattern: str | None = None) -> str:
+    for path, interfaces in objects.items():
+        adapter = interfaces.get(ADAPTER_INTERFACE)
         if adapter is None:
             continue
-        if not pattern or pattern == adapter["Address"] or \
-                            path.endswith(pattern):
-            obj = bus.get_object(SERVICE_NAME, path)
-            return dbus.Interface(obj, ADAPTER_INTERFACE)
-    raise Exception("Bluetooth adapter not found")
+        address = str(adapter.get("Address", ""))
+        if pattern is None or pattern.casefold() == address.casefold() or path.endswith(
+            pattern
+        ):
+            return path
+    raise AdapterNotFoundError("Bluetooth adapter not found")
 
-def find_device(device_address, adapter_pattern=None):
-    return find_device_in_objects(get_managed_objects(), device_address,
-                                adapter_pattern)
 
-def find_device_in_objects(objects, device_address, adapter_pattern=None):
-    bus = dbus.SystemBus()
-    path_prefix = ""
-    if adapter_pattern:
-        adapter = find_adapter_in_objects(objects, adapter_pattern)
-        path_prefix = adapter.object_path
-    for path, ifaces in objects.items():
-        device = ifaces.get(DEVICE_INTERFACE)
+def find_device_path(
+    objects: ManagedObjects,
+    device_address: str,
+    adapter_pattern: str | None = None,
+) -> str:
+    adapter_path = (
+        find_adapter_path(objects, adapter_pattern) if adapter_pattern else None
+    )
+    for path, interfaces in objects.items():
+        device = interfaces.get(DEVICE_INTERFACE)
         if device is None:
             continue
-        if (device["Address"] == device_address and
-                        path.startswith(path_prefix)):
-            obj = bus.get_object(SERVICE_NAME, path)
-            return dbus.Interface(obj, DEVICE_INTERFACE)
+        address = str(device.get("Address", ""))
+        if address.casefold() != device_address.casefold():
+            continue
+        if adapter_path is None or path.startswith(adapter_path + "/"):
+            return path
+    raise DeviceNotFoundError(f"Bluetooth device {device_address} not found")
 
-    raise Exception("Bluetooth device not found")
+
+def find_adapter(pattern: str | None = None, bus=None):
+    if bus is None:
+        bus = _system_bus()
+    return find_adapter_in_objects(get_managed_objects(bus), pattern, bus)
+
+
+def find_adapter_in_objects(
+    objects: ManagedObjects, pattern: str | None = None, bus=None
+):
+    if bus is None:
+        bus = _system_bus()
+    path = find_adapter_path(objects, pattern)
+    obj = bus.get_object(SERVICE_NAME, path)
+    return _dbus_module().Interface(obj, ADAPTER_INTERFACE)
+
+
+def find_device(
+    device_address: str, adapter_pattern: str | None = None, bus=None
+):
+    if bus is None:
+        bus = _system_bus()
+    return find_device_in_objects(
+        get_managed_objects(bus), device_address, adapter_pattern, bus
+    )
+
+
+def find_device_in_objects(
+    objects: ManagedObjects,
+    device_address: str,
+    adapter_pattern: str | None = None,
+    bus=None,
+):
+    if bus is None:
+        bus = _system_bus()
+    path = find_device_path(objects, device_address, adapter_pattern)
+    obj = bus.get_object(SERVICE_NAME, path)
+    return _dbus_module().Interface(obj, DEVICE_INTERFACE)
