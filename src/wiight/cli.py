@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import click
 
@@ -54,6 +55,36 @@ def capture(duration: float, idle_timeout: float, device: str | None, output) ->
                 output.flush()
     except BalanceBoardError as error:
         raise click.ClickException(str(error)) from error
+
+
+@main.command("config-check")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("/etc/wiight/wiight.toml"),
+    show_default=True,
+    help="TOML configuration file.",
+)
+def config_check(config_path: Path) -> None:
+    """Validate service configuration without accessing hardware."""
+    from wiight.calibration import CalibrationStoreError, load_calibration
+    from wiight.config import ConfigError, load_config
+
+    try:
+        config = load_config(config_path)
+        calibration_status = "missing"
+        if config.calibration.path.exists():
+            load_calibration(config.calibration.path, config.board.address)
+            calibration_status = "valid"
+    except (ConfigError, CalibrationStoreError) as error:
+        raise click.ClickException(str(error)) from error
+
+    click.echo(
+        f"configuration valid: board={config.board.address} "
+        f"mqtt={config.mqtt.host}:{config.mqtt.port} "
+        f"calibration={calibration_status}"
+    )
 
 
 if __name__ == "__main__":

@@ -3,11 +3,14 @@ import importlib
 import json
 import sys
 from contextlib import contextmanager
+from pathlib import Path
 
 from click.testing import CliRunner
 
 import wiight.hardware as hardware
 from wiight import CornerReading
+from wiight.calibration import store_calibration
+from wiight.measurement import TareCalibration
 
 
 def test_cli_help_does_not_import_native_hardware(monkeypatch) -> None:
@@ -58,3 +61,52 @@ def test_capture_writes_json_lines(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert json.loads(result.output)["corners_centikilograms"] == [30, 10, 20, 40]
+
+
+def write_config(path: Path, calibration_path: Path) -> None:
+    path.write_text(
+        f"""
+[board]
+address = "00:22:4C:60:0C:DB"
+
+[calibration]
+path = "{calibration_path}"
+
+[mqtt]
+host = "mqtt.local"
+""".strip(),
+        encoding="utf-8",
+    )
+
+
+def test_config_check_reports_valid_config_without_hardware(tmp_path: Path) -> None:
+    config_path = tmp_path / "wiight.toml"
+    write_config(config_path, tmp_path / "missing-calibration.json")
+
+    result = CliRunner().invoke(
+        importlib.import_module("wiight.cli").main,
+        ["config-check", "--config", str(config_path)],
+    )
+
+    assert result.exit_code == 0
+    assert "configuration valid" in result.output
+    assert "calibration=missing" in result.output
+
+
+def test_config_check_rejects_calibration_for_other_board(tmp_path: Path) -> None:
+    config_path = tmp_path / "wiight.toml"
+    calibration_path = tmp_path / "calibration.json"
+    write_config(config_path, calibration_path)
+    store_calibration(
+        calibration_path,
+        "AA:BB:CC:DD:EE:FF",
+        TareCalibration(CornerReading(1, 2, 3, 4), 100, 2),
+    )
+
+    result = CliRunner().invoke(
+        importlib.import_module("wiight.cli").main,
+        ["config-check", "--config", str(config_path)],
+    )
+
+    assert result.exit_code != 0
+    assert "belongs to board" in result.output

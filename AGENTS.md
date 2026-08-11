@@ -16,6 +16,8 @@ Read [README.md](README.md) for user-facing installation information and [pyproj
 - [src/wiight/measurement.py](src/wiight/measurement.py) owns hardware-independent calibration and stable-weight calculations.
 - [src/wiight/hardware.py](src/wiight/hardware.py) owns bounded xwiimote discovery, interface lifecycle, event capture, and hardware errors.
 - [src/wiight/cli.py](src/wiight/cli.py) owns the `wiight` Click command group and presentation formats.
+- [src/wiight/config.py](src/wiight/config.py) owns strict TOML loading and service configuration validation.
+- [src/wiight/calibration.py](src/wiight/calibration.py) owns versioned, board-bound, atomic tare persistence.
 - [src/wiight/wiiweigh.py](src/wiight/wiiweigh.py) contains the legacy discovery and measurement flow while it is incrementally replaced by the new modules.
 - [src/wiight/bluezutils.py](src/wiight/bluezutils.py) owns BlueZ object discovery and D-Bus adapter/device lookup.
 - Preserve the corner order `(top_left, top_right, bottom_right, bottom_left)` across raw readings, calibration values, tests, and public APIs.
