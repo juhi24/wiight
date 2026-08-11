@@ -13,6 +13,7 @@
 - [Measurement](#measurement)
 - [Capture](#capture)
 - [MQTT Service](#mqtt-service)
+- [Raspberry Pi Deployment](#raspberry-pi-deployment)
 - [License](#license)
 
 ## Installation
@@ -136,6 +137,54 @@ The MQTT client configures a retained offline last will and flushes a graceful
 offline update before disconnecting. Corner samples are not published. Hardware
 access runs in a dedicated worker with bounded sample buffering, while stable
 measurement detection and publishing remain in the service thread.
+
+## Raspberry Pi Deployment
+
+The supported deployment target is Raspberry Pi OS Trixie with CPython 3.13.
+Install BlueZ, libxwiimote, the `hid-wiimote` kernel driver, and a Python 3.13
+xwiimote binding from system packages or their upstream sources before creating
+the application environment. The native binding is not installed from PyPI.
+
+From a source checkout, install the service into a system-site-packages-enabled
+virtual environment so it can see the native binding:
+
+```console
+sudo python3.13 -m venv --system-site-packages /opt/wiight/venv
+sudo /opt/wiight/venv/bin/pip install '.[mqtt]'
+```
+
+Install the service account, state directory, configuration, credentials, and
+unit supplied under `deploy/`:
+
+```console
+sudo install -m 0644 deploy/wiight.sysusers /usr/lib/sysusers.d/wiight.conf
+sudo install -m 0644 deploy/wiight.tmpfiles /usr/lib/tmpfiles.d/wiight.conf
+sudo systemd-sysusers /usr/lib/sysusers.d/wiight.conf
+sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/wiight.conf
+
+sudo install -d -m 0750 -o root -g wiight /etc/wiight
+sudo install -m 0640 -o root -g wiight \
+	deploy/wiight.toml.example /etc/wiight/wiight.toml
+sudo install -m 0600 -o root -g root \
+	deploy/wiight.env.example /etc/wiight/wiight.env
+sudo install -m 0644 deploy/wiight.service /etc/systemd/system/wiight.service
+```
+
+Edit the board address, broker settings, and credentials. Pair and connect the
+board through BlueZ, then initialize tare as the service user and start the
+daemon:
+
+```console
+sudo -u wiight /opt/wiight/venv/bin/wiight tare \
+	--config /etc/wiight/wiight.toml
+sudo systemctl daemon-reload
+sudo systemctl enable --now wiight.service
+sudo journalctl -u wiight.service -f
+```
+
+The unit runs without privilege escalation, keeps `/etc/wiight` read-only, and
+permits writes only to `/var/lib/wiight`. Membership in the `input` group is
+included for systems where the xwiimote devices require it.
 
 ## License
 

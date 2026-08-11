@@ -2,7 +2,7 @@
 
 ## Project direction
 
-`wiight` is a Python 3.12+ library and CLI for reading weight data from a Wii Balance Board on Linux. Keep reusable measurement and calibration logic separate from BlueZ, D-Bus, GLib, and xwiimote integration so it can be tested without hardware.
+`wiight` is a Python 3.13+ library and CLI for reading weight data from a Wii Balance Board on Linux. Keep reusable measurement and calibration logic separate from BlueZ, D-Bus, GLib, and xwiimote integration so it can be tested without hardware.
 
 Read [README.md](README.md) for user-facing installation information and [pyproject.toml](pyproject.toml) for authoritative package metadata and tool configuration.
 

@@ -1,0 +1,26 @@
+[Unit]
+Description=Wiight Wii Balance Board MQTT service
+After=bluetooth.target network-online.target
+Wants=bluetooth.target network-online.target
+
+[Service]
+Type=simple
+User=wiight
+Group=wiight
+SupplementaryGroups=input
+ExecStart=/opt/wiight/venv/bin/wiight daemon --config /etc/wiight/wiight.toml
+EnvironmentFile=-/etc/wiight/wiight.env
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+StateDirectory=wiight
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=false
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/wiight
+
+[Install]
+WantedBy=multi-user.target
