@@ -219,7 +219,7 @@ def test_daemon_service_handles_pair_command_and_publishes_result() -> None:
     assert pairing_states == ["idle", "pairing", "paired"]
 
 
-def test_daemon_service_tares_from_worker_samples(tmp_path: Path) -> None:
+def test_daemon_service_disconnects_after_successful_tare(tmp_path: Path) -> None:
     calibration_path = tmp_path / "calibration.json"
     config = ServiceConfig(
         board=BoardConfig("00:22:4C:60:0C:DB"),
@@ -231,17 +231,12 @@ def test_daemon_service_tares_from_worker_samples(tmp_path: Path) -> None:
         ),
     )
     publisher = RecordingPublisher()
-    service = DaemonService(config, None, publisher, FakeWorker(Event()))
-    service.engine.handle(WorkerStarted(0, "/device"))
+    publisher.commands.append(TareCommand())
+    stop_event = Event()
+    worker = FakeWorker(stop_event)
+    service = DaemonService(config, None, publisher, worker)
 
-    service._start_tare()
-    for timestamp in (1.0, 2.0, 3.0):
-        service._handle_event(
-            WorkerSample(
-                1_786_454_600 + timestamp,
-                SensorSample(timestamp, CornerReading(25, 26, 27, 28)),
-            )
-        )
+    service.run(stop_event)
 
     stored = json.loads(calibration_path.read_text(encoding="utf-8"))
     tare_states = [
@@ -249,9 +244,10 @@ def test_daemon_service_tares_from_worker_samples(tmp_path: Path) -> None:
         for message in publisher.messages
         if message.topic.endswith("/tare/status")
     ]
-    assert stored["offsets"] == [25.0, 26.0, 27.0, 28.0]
+    assert stored["offsets"] == [250.0, 250.0, 250.0, 250.0]
     assert service.engine.calibrated
-    assert tare_states == ["taring", "tared"]
+    assert worker.disconnected
+    assert tare_states == ["idle", "taring", "tared"]
     assert not any(message.topic.endswith("/weight") for message in publisher.messages)
 
 

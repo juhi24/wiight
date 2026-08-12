@@ -247,7 +247,8 @@ class DaemonService:
 
         Startup publishes discovery, availability, status, pairing state, and tare
         state before hardware capture begins. Pair and tare commands are handled in
-        the service thread. Each stable measurement triggers a board disconnect.
+        the service thread. Each stable measurement or successful tare triggers a
+        board disconnect.
         Shutdown stops the worker, drains lifecycle events, publishes retained offline
         availability, flushes it, and then stops the publisher.
         """
@@ -335,7 +336,7 @@ class DaemonService:
             if isinstance(event, WorkerSample):
                 self.tare_samples.append(event.sample)
                 if len(self.tare_samples) >= self.config.calibration.minimum_samples:
-                    self._finish_tare()
+                    return self._finish_tare()
                 return False
             if isinstance(event, (WorkerDisconnected, WorkerError, WorkerStopped)):
                 self.tare_samples = None
@@ -348,11 +349,12 @@ class DaemonService:
                 )
         return self.engine.handle(event)
 
-    def _finish_tare(self) -> None:
+    def _finish_tare(self) -> bool:
         """Validate, atomically persist, and activate collected tare samples.
 
         Calibration or storage failures are published without replacing the active
-        detector. A successful tare updates daemon calibration status immediately.
+        detector. A successful tare updates daemon calibration status immediately
+        and requests board disconnection.
         """
 
         assert self.tare_samples is not None
@@ -378,6 +380,7 @@ class DaemonService:
                     self.config.mqtt, state="failed", error=str(error)
                 )
             )
+            return False
         else:
             self.engine.set_calibration(
                 calibration,
@@ -386,6 +389,7 @@ class DaemonService:
             self.publisher.publish(
                 tare_status_message(self.config.mqtt, state="tared")
             )
+            return True
         finally:
             self.tare_samples = None
 
