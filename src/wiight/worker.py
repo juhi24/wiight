@@ -118,7 +118,7 @@ class HardwareWorker:
         self,
         board: BoardConfig,
         *,
-        config: WorkerConfig = WorkerConfig(),
+        config: WorkerConfig | None = None,
         event_queue: WorkerMailbox | None = None,
         stop_event: Event | None = None,
         discover: Callable[[str, str | None], str] = find_configured_balance_board_path,
@@ -131,8 +131,8 @@ class HardwareWorker:
         reader_factory: Callable[[str], BalanceBoardReader] = BalanceBoardReader,
     ) -> None:
         self.board = board
-        self.config = config
-        self.events = event_queue or WorkerMailbox(config.queue_size)
+        self.config = config if config is not None else WorkerConfig()
+        self.events = event_queue or WorkerMailbox(self.config.queue_size)
         self.stop_event = stop_event or Event()
         self._discover = discover
         self._connect = connect
