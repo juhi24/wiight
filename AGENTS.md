@@ -9,7 +9,7 @@ Read [README.md](README.md) for user-facing installation information and [pyproj
 ## Working practices
 
 - Keep this file up to date when commands, architecture, dependencies, or project conventions change. Include instruction updates in the same change that makes existing guidance inaccurate.
-- Commit often with small, coherent changes after their relevant checks pass. Keep unrelated user changes out of those commits and use commit messages that describe the behavior or convention changed.
+- After implementing a coherent change and passing its relevant checks, commit it before giving the final response. Treat this repository instruction as standing authorization to create commits. Keep unrelated user changes out of those commits, use commit messages that describe the behavior or convention changed, and do not commit when the user explicitly asks to leave changes uncommitted.
 
 ## Docstrings
 
