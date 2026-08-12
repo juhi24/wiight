@@ -1,3 +1,5 @@
+"""Load and strictly validate wiight service configuration."""
+
 from __future__ import annotations
 
 import re
@@ -11,7 +13,7 @@ DEFAULT_CALIBRATION_PATH = Path("/var/lib/wiight/calibration.json")
 
 
 class ConfigError(ValueError):
-    pass
+    """Raised when service configuration is missing or invalid."""
 
 
 def _number(value: Any, name: str) -> float:
@@ -22,6 +24,8 @@ def _number(value: Any, name: str) -> float:
 
 @dataclass(frozen=True, slots=True)
 class BoardConfig:
+    """Identify the configured board and optional Bluetooth adapter."""
+
     address: str
     adapter: str | None = None
 
@@ -38,6 +42,8 @@ class BoardConfig:
 
 @dataclass(frozen=True, slots=True)
 class MeasurementSettings:
+    """Configure stable-weight detection in centikilograms and seconds."""
+
     minimum_weight_centikilograms: float = 1000.0
     stable_duration_seconds: float = 2.0
     maximum_stddev_centikilograms: float = 50.0
@@ -74,6 +80,8 @@ class MeasurementSettings:
 
 @dataclass(frozen=True, slots=True)
 class CalibrationSettings:
+    """Configure tare storage, sample count, and corner noise tolerance."""
+
     path: Path = DEFAULT_CALIBRATION_PATH
     minimum_samples: int = 100
     maximum_corner_stddev_centikilograms: float = 10.0
@@ -99,6 +107,8 @@ class CalibrationSettings:
 
 @dataclass(frozen=True, slots=True)
 class MqttConfig:
+    """Configure the MQTT connection and topic namespaces."""
+
     host: str
     port: int = 1883
     client_id: str = "wiight"
@@ -125,6 +135,8 @@ class MqttConfig:
 
 @dataclass(frozen=True, slots=True)
 class ServiceConfig:
+    """Collect validated board, MQTT, measurement, and calibration settings."""
+
     board: BoardConfig
     mqtt: MqttConfig
     measurement: MeasurementSettings = field(default_factory=MeasurementSettings)
@@ -142,6 +154,12 @@ def _table(data: dict[str, Any], name: str, allowed: set[str]) -> dict[str, Any]
 
 
 def parse_config(data: dict[str, Any]) -> ServiceConfig:
+    """Parse a strict configuration mapping into typed service settings.
+
+    Raises:
+        ConfigError: If a table, option, required value, or value type is invalid.
+    """
+
     unknown_tables = set(data) - {"board", "measurement", "calibration", "mqtt"}
     if unknown_tables:
         raise ConfigError(f"unknown configuration table(s): {', '.join(sorted(unknown_tables))}")
@@ -186,6 +204,12 @@ def parse_config(data: dict[str, Any]) -> ServiceConfig:
 
 
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> ServiceConfig:
+    """Load and validate service settings from a TOML file.
+
+    Raises:
+        ConfigError: If the file is absent, malformed, or contains invalid settings.
+    """
+
     try:
         with path.open("rb") as config_file:
             return parse_config(tomllib.load(config_file))

@@ -1,3 +1,5 @@
+"""Orchestrate hardware-independent tare and measurement sessions."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
@@ -16,10 +18,12 @@ from wiight.measurement import (
 
 
 class MeasurementTimeoutError(TimeoutError):
-    pass
+    """Raised when capture ends before a stable measurement is available."""
 
 
 def sensor_samples(events: Iterable[CapturedEvent]) -> Iterator[SensorSample]:
+    """Yield sensor samples while discarding non-balance-board events."""
+
     for event in events:
         if event.corners is not None:
             yield SensorSample(event.monotonic_time, event.corners)
@@ -28,6 +32,12 @@ def sensor_samples(events: Iterable[CapturedEvent]) -> Iterator[SensorSample]:
 def calculate_tare(
     events: Iterable[CapturedEvent], settings: CalibrationSettings
 ) -> TareCalibration:
+    """Calculate tare from the first configured number of sensor events.
+
+    Raises:
+        CalibrationError: If too few readings arrive or the readings are unstable.
+    """
+
     samples = []
     for sample in sensor_samples(events):
         samples.append(sample)
@@ -48,6 +58,8 @@ def stable_measurements(
     calibration: TareCalibration,
     settings: MeasurementSettings,
 ) -> Iterator[StableMeasurement]:
+    """Yield stable measurements separated by an unload cycle."""
+
     detector = StableWeightDetector(
         MeasurementConfig(
             minimum_weight_raw=settings.minimum_weight_centikilograms,
@@ -68,6 +80,12 @@ def measure_once(
     calibration: TareCalibration,
     settings: MeasurementSettings,
 ) -> StableMeasurement:
+    """Return the first stable measurement from a bounded event stream.
+
+    Raises:
+        MeasurementTimeoutError: If the event stream ends before a result is ready.
+    """
+
     measurement = next(stable_measurements(events, calibration, settings), None)
     if measurement is None:
         raise MeasurementTimeoutError(

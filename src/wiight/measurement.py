@@ -1,3 +1,5 @@
+"""Calibrate balance-board readings and detect stable weights."""
+
 from __future__ import annotations
 
 from collections import deque
@@ -10,6 +12,8 @@ CENTIKILOGRAMS_PER_KILOGRAM = 100.0
 
 
 def centikilograms_to_kilograms(value: float) -> float:
+    """Convert a weight from centikilograms to kilograms."""
+
     return value / CENTIKILOGRAMS_PER_KILOGRAM
 
 
@@ -23,15 +27,21 @@ class CornerReading:
     bottom_left: float
 
     def __iter__(self) -> Iterator[float]:
+        """Iterate over values in canonical corner order."""
+
         return iter(
             (self.top_left, self.top_right, self.bottom_right, self.bottom_left)
         )
 
     @property
     def total(self) -> float:
+        """Return the sum of all four corner values."""
+
         return sum(self)
 
     def subtract(self, offsets: CornerReading) -> CornerReading:
+        """Return a reading with the corresponding offsets subtracted."""
+
         return CornerReading(
             top_left=self.top_left - offsets.top_left,
             top_right=self.top_right - offsets.top_right,
@@ -42,12 +52,16 @@ class CornerReading:
 
 @dataclass(frozen=True, slots=True)
 class SensorSample:
+    """Associate a monotonic timestamp with a four-corner reading."""
+
     monotonic_time: float
     corners: CornerReading
 
 
 @dataclass(frozen=True, slots=True)
 class CalibrationConfig:
+    """Configure the sample count and noise limit used for taring."""
+
     minimum_samples: int = 10
     maximum_corner_stddev: float = 10.0
 
@@ -60,16 +74,22 @@ class CalibrationConfig:
 
 @dataclass(frozen=True, slots=True)
 class TareCalibration:
+    """Describe corner offsets derived from an unloaded board."""
+
     offsets: CornerReading
     sample_count: int
     maximum_corner_stddev: float
 
     def apply(self, reading: CornerReading) -> CornerReading:
+        """Subtract the tare offsets from a corner reading."""
+
         return reading.subtract(self.offsets)
 
 
 @dataclass(frozen=True, slots=True)
 class MeasurementConfig:
+    """Configure stable-weight detection in raw centikilogram units."""
+
     minimum_weight_raw: float
     stable_duration: float
     maximum_stddev_raw: float
@@ -91,6 +111,8 @@ class MeasurementConfig:
 
 @dataclass(frozen=True, slots=True)
 class StableMeasurement:
+    """Describe a stable weight window in raw centikilogram units."""
+
     raw_total: float
     raw_stddev: float
     monotonic_time: float
@@ -102,14 +124,16 @@ class CalibrationError(ValueError):
 
 
 class InsufficientSamplesError(CalibrationError):
-    pass
+    """Raised when too few samples are available for calibration."""
 
 
 class UnstableCalibrationError(CalibrationError):
-    pass
+    """Raised when calibration samples exceed the permitted noise."""
 
 
 class StableWeightDetector:
+    """Detect stable weight windows and require unloading between results."""
+
     def __init__(
         self, config: MeasurementConfig, calibration: TareCalibration
     ) -> None:
@@ -120,6 +144,20 @@ class StableWeightDetector:
         self._last_sample_time: float | None = None
 
     def add(self, sample: SensorSample) -> StableMeasurement | None:
+        """Add a sample and return a newly completed stable measurement.
+
+        Args:
+            sample: Reading whose timestamp must be later than the previous sample.
+
+        Returns:
+            A stable measurement when the configured window completes, otherwise
+            ``None``. After producing a result, the detector returns ``None`` until
+            the board is unloaded below the configured threshold.
+
+        Raises:
+            ValueError: If sample timestamps are not strictly increasing.
+        """
+
         if (
             self._last_sample_time is not None
             and sample.monotonic_time <= self._last_sample_time
@@ -160,6 +198,8 @@ class StableWeightDetector:
         )
 
     def reset(self) -> None:
+        """Discard all samples and return to the initial unloaded state."""
+
         self._window.clear()
         self._waiting_for_unload = False
         self._last_sample_time = None
@@ -169,6 +209,22 @@ def compute_tare(
     samples: Iterable[SensorSample],
     config: CalibrationConfig = CalibrationConfig(),
 ) -> TareCalibration:
+    """Compute corner offsets from unloaded-board samples.
+
+    Args:
+        samples: Unloaded-board readings to aggregate.
+        config: Required sample count and maximum per-corner noise.
+
+    Returns:
+        Calibration containing mean offsets and observed maximum standard deviation.
+
+    Raises:
+        InsufficientSamplesError: If fewer than the configured number of samples are
+            supplied.
+        UnstableCalibrationError: If any corner exceeds the configured population
+            standard deviation.
+    """
+
     collected = tuple(samples)
     if len(collected) < config.minimum_samples:
         raise InsufficientSamplesError(

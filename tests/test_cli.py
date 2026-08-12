@@ -3,6 +3,7 @@ import importlib
 import json
 import sys
 from contextlib import contextmanager
+from importlib.metadata import version
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -28,11 +29,14 @@ def test_cli_help_does_not_import_native_hardware(monkeypatch) -> None:
 
     bare_result = CliRunner().invoke(module.main)
     help_result = CliRunner().invoke(module.main, ["--help"])
+    version_result = CliRunner().invoke(module.main, ["--version"])
 
     assert bare_result.exit_code == 0
     assert help_result.exit_code == 0
+    assert version_result.exit_code == 0
     assert "Usage:" in bare_result.output
     assert "Usage:" in help_result.output
+    assert version_result.output == f"wiight, version {version('wiight')}\n"
 
 
 def test_capture_writes_json_lines(monkeypatch) -> None:

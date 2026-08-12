@@ -1,3 +1,5 @@
+"""Discover Wii Balance Boards and capture cancellable xwiimote events."""
+
 from __future__ import annotations
 
 import importlib
@@ -15,25 +17,29 @@ from wiight.measurement import CornerReading
 
 
 class BalanceBoardError(RuntimeError):
-    pass
+    """Base class for balance-board discovery and capture failures."""
 
 
 class BalanceBoardNotFoundError(BalanceBoardError):
-    pass
+    """Raised when a unique requested balance board cannot be found."""
 
 
 class CaptureIdleTimeoutError(BalanceBoardError):
-    pass
+    """Raised when an open board produces no events before its idle deadline."""
 
 
 @dataclass(frozen=True, slots=True)
 class CapturedEvent:
+    """Represent a timestamped xwiimote event and optional corner reading."""
+
     wall_time: float
     monotonic_time: float
     event_type: int
     corners: CornerReading | None = None
 
     def as_dict(self) -> dict[str, Any]:
+        """Return the versioned JSON-compatible capture representation."""
+
         record: dict[str, Any] = {
             "schema_version": 1,
             "type": "sample" if self.corners is not None else "xwiimote_event",
@@ -57,6 +63,12 @@ def _xwiimote_module():
 
 
 def find_balance_board_path() -> str:
+    """Return the sysfs path of the only connected balance board.
+
+    Raises:
+        BalanceBoardNotFoundError: If zero or multiple boards are available.
+    """
+
     matches = _find_balance_board_paths()
     if not matches:
         raise BalanceBoardNotFoundError("no connected balance board found")
@@ -84,6 +96,17 @@ def find_configured_balance_board_path(
     adapter_pattern: str | None = None,
     bus: Any | None = None,
 ) -> str:
+    """Resolve a configured, connected BlueZ board to its xwiimote path.
+
+    The BlueZ identity check prevents an unrelated connection from selecting a
+    board. Because xwiimote does not expose the Bluetooth address, the function
+    requires exactly one balance board after validating the configured device.
+
+    Raises:
+        BalanceBoardNotFoundError: If BlueZ or xwiimote cannot identify one board.
+        BalanceBoardError: If BlueZ cannot be queried.
+    """
+
     try:
         objects = bluezutils.get_managed_objects(bus)
         bluezutils.find_connected_device_path(
@@ -111,6 +134,12 @@ def disconnect_configured_balance_board(
     board_address: str,
     adapter_pattern: str | None = None,
 ) -> None:
+    """Disconnect the configured board through BlueZ.
+
+    Raises:
+        BalanceBoardError: If the device cannot be found or disconnected.
+    """
+
     try:
         bluezutils.disconnect_device(board_address, adapter_pattern)
     except bluezutils.BlueZLookupError as error:
@@ -123,6 +152,13 @@ def connect_configured_balance_board(
     board_address: str,
     adapter_pattern: str | None = None,
 ) -> None:
+    """Request the configured board's HID profile through BlueZ.
+
+    Raises:
+        BalanceBoardNotFoundError: If the configured device is unavailable.
+        BalanceBoardError: If BlueZ rejects or cannot perform the request.
+    """
+
     try:
         bluezutils.connect_device_profile(
             board_address,
@@ -138,6 +174,8 @@ def connect_configured_balance_board(
 
 
 class BalanceBoardReader:
+    """Own an explicitly opened xwiimote balance-board interface."""
+
     def __init__(self, device_path: str) -> None:
         self.device_path = device_path
         self._interface: Any | None = None
@@ -145,10 +183,18 @@ class BalanceBoardReader:
 
     @property
     def is_open(self) -> bool:
+        """Return whether the xwiimote interface is currently open."""
+
         return self._interface is not None
 
     @property
     def interface(self) -> Any:
+        """Return the open native interface.
+
+        Raises:
+            BalanceBoardError: If the reader is not inside its context manager.
+        """
+
         if self._interface is None:
             raise BalanceBoardError("balance board reader is not open")
         return self._interface
@@ -181,6 +227,11 @@ class BalanceBoardReader:
         idle_timeout: float,
         stop_event: Event | None = None,
     ) -> Generator[CapturedEvent, None, None]:
+        """Yield bounded events from the open interface.
+
+        See :func:`capture_events` for timing and cancellation semantics.
+        """
+
         yield from capture_events(
             self.interface,
             duration=duration,
@@ -191,6 +242,8 @@ class BalanceBoardReader:
 
 @contextmanager
 def open_balance_board(device_path: str | None = None) -> Iterator[Any]:
+    """Open a selected or uniquely discovered board and yield its interface."""
+
     with BalanceBoardReader(device_path or find_balance_board_path()) as reader:
         yield reader.interface
 
@@ -211,6 +264,21 @@ def capture_events(
     idle_timeout: float,
     stop_event: Event | None = None,
 ) -> Generator[CapturedEvent, None, None]:
+    """Capture xwiimote events until duration, cancellation, or idle timeout.
+
+    Args:
+        interface: Open xwiimote interface to poll and dispatch.
+        duration: Maximum total capture duration in seconds.
+        idle_timeout: Maximum seconds allowed between any xwiimote events.
+        stop_event: Optional cancellation signal, checked at least every 250 ms.
+
+    Yields:
+        Timestamped events, with corner values for balance-board events.
+
+    Raises:
+        CaptureIdleTimeoutError: If no event arrives before the idle deadline.
+    """
+
     xwiimote = _xwiimote_module()
     poller = select.poll()
     file_descriptor = interface.get_fd()

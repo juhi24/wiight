@@ -1,3 +1,5 @@
+"""Provide the legacy D-Bus and xwiimote measurement workflow."""
+
 import importlib
 import logging
 import select
@@ -21,17 +23,25 @@ logger = logging.getLogger(__name__)
 
 
 def _xwiimote_module():
+    """Import and return the optional xwiimote binding."""
+
     return importlib.import_module("xwiimote")
 
 
 # from https://github.com/irq0/wiiscale/blob/master/scale.py
 class RingBuffer:
+    """Store a fixed-size rolling window for the legacy averaging flow."""
+
     def __init__(self, length):
+        """Initialize an empty buffer with ``length`` entries."""
+
         self.length = length
         self.reset()
         self.filled = False
 
     def extend(self, x):
+        """Append all values from a NumPy array, wrapping as needed."""
+
         x_index = (self.index + np.arange(x.size)) % self.data.size
         self.data[x_index] = x
         self.index = x_index[-1] + 1
@@ -39,6 +49,8 @@ class RingBuffer:
             self.filled = True
 
     def append(self, x):
+        """Append one value, overwriting the oldest entry when full."""
+
         x_index = (self.index + 1) % self.data.size
         self.data[x_index] = x
         self.index = x_index
@@ -46,15 +58,21 @@ class RingBuffer:
             self.filled = True
 
     def get(self):
+        """Return buffered values in rolling order."""
+
         idx = (self.index + np.arange(self.data.size)) %self.data.size
         return self.data[idx]
 
     def reset(self):
+        """Clear values and reset the write position."""
+
         self.data = np.zeros(self.length, dtype=int)
         self.index = 0
 
 
 def dev_is_balanceboard(dev):
+    """Return whether a newly connected xwiimote device is a balance board."""
+
     time.sleep(2) # if we check the devtype to early it is reported as 'unknown' :(
     xwiimote = _xwiimote_module()
     iface = xwiimote.iface(dev)
@@ -62,6 +80,8 @@ def dev_is_balanceboard(dev):
 
 
 def wait_for_balanceboard():
+    """Block until xwiimote reports a newly connected balance board."""
+
     xwiimote = _xwiimote_module()
     print("Waiting for balanceboard to connect..")
     mon = xwiimote.monitor(True, False)
@@ -82,6 +102,8 @@ def wait_for_balanceboard():
 
 
 def corner_reading_from_event(event) -> CornerReading:
+    """Map a legacy xwiimote event into canonical corner order."""
+
     return CornerReading(
         top_left=event.get_abs(2)[0],
         top_right=event.get_abs(0)[0],
@@ -91,6 +113,8 @@ def corner_reading_from_event(event) -> CornerReading:
 
 
 def measurements(iface, calibration=(0,0,0,0)):
+    """Yield calibrated corner tuples from balance-board events indefinitely."""
+
     xwiimote = _xwiimote_module()
     offsets = CornerReading(*calibration)
     poller = select.poll()
@@ -107,7 +131,8 @@ def measurements(iface, calibration=(0,0,0,0)):
             
 
 def calibrate(iface):
-    """Calibrate empty balance board"""
+    """Calculate tare offsets from ten unloaded-board readings."""
+
     print("Calibrating balanceboard..")
     readings = measurements(iface)
     samples = [
@@ -121,6 +146,11 @@ def calibrate(iface):
 
 def average_measurements(ms, window_size=800, max_stddev=10, min_weight=10, 
                         max_measurements=5000):
+    """Return median weight and dispersion once a legacy window is stable.
+
+    Returns zero values when stability is not reached within ``max_measurements``.
+    """
+
     last_measurements = RingBuffer(window_size)
     counter = 0
     while True:
@@ -136,6 +166,8 @@ def average_measurements(ms, window_size=800, max_stddev=10, min_weight=10,
 
     
 def find_device_address(bus):
+    """Return the first registered Nintendo balance-board address, if any."""
+
     dbus = importlib.import_module("dbus")
 
     adapter = find_adapter(bus=bus)
@@ -156,6 +188,8 @@ def find_device_address(bus):
 
 
 def connect_balanceboard(bus):
+    """Connect, tare, measure once, and disconnect through the legacy flow."""
+
     global bbaddress
     xwiimote = _xwiimote_module()
     #device is something like "/sys/devices/platform/soc/3f201000.uart/tty/ttyAMA0/hci0/hci0:11/0005:057E:0306.000C"
@@ -179,6 +213,8 @@ def connect_balanceboard(bus):
 
 
 def property_changed(interface, changed, invalidated, path, bus=None):
+    """Handle legacy BlueZ property changes and measure new connections."""
+
     iface = interface[interface.rfind(".") + 1:]
     for name, value in changed.items():
         val = str(value)
@@ -190,6 +226,8 @@ def property_changed(interface, changed, invalidated, path, bus=None):
 
 @click.command()
 def main():
+    """Run the legacy GLib connection-monitoring service."""
+
     dbus = importlib.import_module("dbus")
     dbus_glib = importlib.import_module("dbus.mainloop.glib")
 

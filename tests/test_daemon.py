@@ -1,11 +1,17 @@
 import json
+from pathlib import Path
 from threading import Event
 
 from wiight import CornerReading, SensorSample, TareCalibration
 from wiight import bluezutils
-from wiight.config import BoardConfig, MqttConfig, ServiceConfig
+from wiight.config import (
+    BoardConfig,
+    CalibrationSettings,
+    MqttConfig,
+    ServiceConfig,
+)
 from wiight.daemon import DaemonEngine, DaemonService, DaemonState
-from wiight.mqtt import PairCommand, PublishMessage
+from wiight.mqtt import Command, PairCommand, PublishMessage, TareCommand
 from wiight.worker import (
     WorkerDisconnected,
     WorkerError,
@@ -22,7 +28,7 @@ class RecordingPublisher:
         self.started = False
         self.stopped = False
         self.flushed = False
-        self.commands: list[PairCommand] = []
+        self.commands: list[Command] = []
 
     def start(self) -> None:
         self.started = True
@@ -30,7 +36,7 @@ class RecordingPublisher:
     def publish(self, message: PublishMessage) -> None:
         self.messages.append(message)
 
-    def get_command(self, timeout: float = 0.0) -> PairCommand | None:
+    def get_command(self, timeout: float = 0.0) -> Command | None:
         return self.commands.pop(0) if self.commands else None
 
     def flush(self, timeout: float = 5.0) -> None:
@@ -211,6 +217,42 @@ def test_daemon_service_handles_pair_command_and_publishes_result() -> None:
         if message.topic.endswith("/pair/status")
     ]
     assert pairing_states == ["idle", "pairing", "paired"]
+
+
+def test_daemon_service_tares_from_worker_samples(tmp_path: Path) -> None:
+    calibration_path = tmp_path / "calibration.json"
+    config = ServiceConfig(
+        board=BoardConfig("00:22:4C:60:0C:DB"),
+        mqtt=MqttConfig(host="mqtt.local"),
+        calibration=CalibrationSettings(
+            path=calibration_path,
+            minimum_samples=3,
+            maximum_corner_stddev_centikilograms=10,
+        ),
+    )
+    publisher = RecordingPublisher()
+    service = DaemonService(config, None, publisher, FakeWorker(Event()))
+    service.engine.handle(WorkerStarted(0, "/device"))
+
+    service._start_tare()
+    for timestamp in (1.0, 2.0, 3.0):
+        service._handle_event(
+            WorkerSample(
+                1_786_454_600 + timestamp,
+                SensorSample(timestamp, CornerReading(25, 26, 27, 28)),
+            )
+        )
+
+    stored = json.loads(calibration_path.read_text(encoding="utf-8"))
+    tare_states = [
+        json.loads(message.payload)["state"]
+        for message in publisher.messages
+        if message.topic.endswith("/tare/status")
+    ]
+    assert stored["offsets"] == [25.0, 26.0, 27.0, 28.0]
+    assert service.engine.calibrated
+    assert tare_states == ["taring", "tared"]
+    assert not any(message.topic.endswith("/weight") for message in publisher.messages)
 
 
 def test_daemon_service_reports_pair_failure_without_stopping_early() -> None:

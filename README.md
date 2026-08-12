@@ -175,11 +175,19 @@ requested by publishing the exact payload `PAIR` at QoS 1, without retain, to
 status is published to `wiight/scale/pair/status` with the states `idle`,
 `pairing`, `paired`, or `failed`.
 
+Home Assistant discovery also includes a Tare button. Unload the board before
+pressing it, or publish the exact payload `TARE` at QoS 1, without retain, to
+`wiight/scale/tare/set`. The daemon collects the configured number of samples,
+applies the configured corner noise limit, atomically replaces the persisted
+calibration, and uses it immediately. Retained JSON status is published to
+`wiight/scale/tare/status` with the states `idle`, `taring`, `tared`, or
+`failed`.
+
 Pairing is restricted to the configured board address and adapter. BlueZ's
 built-in `autopair` plugin recognizes `Nintendo RVL-WBC-01` and supplies the
 adapter address as the Wii protocol's binary PIN. Wiight does not register an
 Agent1 because its string return value cannot safely carry that PIN. Restrict
-publish access to the pair command topic with broker ACLs.
+publish access to the pair and tare command topics with broker ACLs.
 
 ## Raspberry Pi Deployment
 

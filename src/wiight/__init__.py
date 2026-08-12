@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: MIT
 
+"""Hardware-independent public API for Wii Balance Board measurements."""
+
 from wiight.measurement import (
 	CENTIKILOGRAMS_PER_KILOGRAM,
 	CalibrationConfig,

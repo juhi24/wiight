@@ -1,3 +1,5 @@
+"""Expose capture, calibration, measurement, pairing, and daemon commands."""
+
 from __future__ import annotations
 
 import json
@@ -10,6 +12,7 @@ import click
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]}, invoke_without_command=True)
+@click.version_option(package_name="wiight", prog_name="wiight")
 @click.pass_context
 def main(context: click.Context) -> None:
     """Read and measure weight from a Wii Balance Board."""

@@ -8,11 +8,14 @@ from wiight.mqtt import (
     MqttError,
     MqttPublisher,
     PairCommand,
+    TareCommand,
     availability_message,
     discovery_message,
     pair_command_topic,
     pairing_status_message,
     status_message,
+    tare_command_topic,
+    tare_status_message,
     weight_message,
 )
 
@@ -38,6 +41,10 @@ def test_availability_and_status_are_retained() -> None:
     pairing = pairing_status_message(mqtt_config(), state="failed", error="timeout")
     assert pairing.topic == "wiight/bathroom/pair/status"
     assert pairing.retain and json.loads(pairing.payload)["state"] == "failed"
+
+    tare = tare_status_message(mqtt_config(), state="failed", error="unstable")
+    assert tare.topic == "wiight/bathroom/tare/status"
+    assert tare.retain and json.loads(tare.payload)["error"] == "unstable"
 
 
 def test_weight_is_non_retained_and_contains_no_corner_samples() -> None:
@@ -69,6 +76,10 @@ def test_discovery_is_retained_device_discovery() -> None:
         "wiight/bathroom/pair/set"
     )
     assert payload["components"]["pair"]["payload_press"] == "PAIR"
+    assert payload["components"]["tare"]["command_topic"] == (
+        "wiight/bathroom/tare/set"
+    )
+    assert payload["components"]["tare"]["payload_press"] == "TARE"
 
 
 def test_weight_rejects_naive_timestamp() -> None:
@@ -154,7 +165,7 @@ def test_mqtt_publisher_configures_lwt_credentials_tls_and_lifecycle() -> None:
     assert client.calls[-2:] == [("disconnect",), ("loop_stop",)]
 
 
-def test_mqtt_publisher_buffers_only_non_retained_pair_commands() -> None:
+def test_mqtt_publisher_buffers_only_valid_non_retained_commands() -> None:
     client = FakeClient()
     publisher = MqttPublisher(
         mqtt_config(), client_factory=lambda client_id: client
@@ -171,7 +182,13 @@ def test_mqtt_publisher_buffers_only_non_retained_pair_commands() -> None:
 
     assert ("subscribe", "wiight/bathroom/pair/set", 1) in client.calls
     assert isinstance(publisher.get_command(), PairCommand)
-    assert publisher.get_command() is None
+    assert isinstance(publisher.get_command(), PairCommand)
+
+    Message.topic = tare_command_topic(mqtt_config())
+    Message.payload = b"TARE"
+    client.on_message(client, None, Message())
+    assert ("subscribe", "wiight/bathroom/tare/set", 1) in client.calls
+    assert isinstance(publisher.get_command(), TareCommand)
 
     Message.retain = True
     client.on_message(client, None, Message())

@@ -1,3 +1,5 @@
+"""Persist versioned, board-bound tare calibrations."""
+
 from __future__ import annotations
 
 import json
@@ -17,16 +19,20 @@ UNIT = "centikilogram"
 
 
 class CalibrationStoreError(ValueError):
-    pass
+    """Raised when persisted calibration cannot be validated or accessed."""
 
 
 @dataclass(frozen=True, slots=True)
 class StoredCalibration:
+    """Combine tare data with its board identity and creation time."""
+
     board_address: str
     created_at: datetime
     calibration: TareCalibration
 
     def as_dict(self) -> dict[str, Any]:
+        """Return the versioned JSON-compatible storage representation."""
+
         return {
             "schema_version": SCHEMA_VERSION,
             "board_address": self.board_address.upper(),
@@ -42,6 +48,8 @@ class StoredCalibration:
 
 
 def zero_calibration() -> TareCalibration:
+    """Return a calibration that leaves all corner readings unchanged."""
+
     return TareCalibration(
         offsets=CornerReading(0, 0, 0, 0),
         sample_count=0,
@@ -73,6 +81,25 @@ def store_calibration(
     *,
     created_at: datetime | None = None,
 ) -> StoredCalibration:
+    """Validate and atomically persist a tare calibration.
+
+    The file and its containing directory are synchronized before this function
+    returns, and an existing calibration is replaced only after the new document
+    has been written successfully.
+
+    Args:
+        path: Destination JSON file.
+        board_address: Bluetooth MAC address owning the calibration.
+        calibration: Tare values to persist.
+        created_at: Timezone-aware creation time, or the current UTC time by default.
+
+    Returns:
+        The normalized calibration record written to disk.
+
+    Raises:
+        CalibrationStoreError: If values are invalid or the file cannot be written.
+    """
+
     timestamp = created_at or datetime.now(UTC)
     normalized_address = _validate_for_storage(
         board_address, calibration, timestamp
@@ -114,6 +141,20 @@ def store_calibration(
 
 
 def load_calibration(path: Path, board_address: str) -> StoredCalibration:
+    """Load and validate calibration for a specific board.
+
+    Args:
+        path: Calibration JSON file.
+        board_address: Bluetooth MAC address expected to own the calibration.
+
+    Returns:
+        A validated record normalized to uppercase address and UTC time.
+
+    Raises:
+        CalibrationStoreError: If the file is absent, inaccessible, malformed,
+            incompatible, or belongs to another board.
+    """
+
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
@@ -170,6 +211,15 @@ def load_calibration(path: Path, board_address: str) -> StoredCalibration:
 def load_optional_calibration(
     path: Path, board_address: str
 ) -> StoredCalibration | None:
+    """Load calibration when present while rejecting invalid existing files.
+
+    Returns:
+        ``None`` only when the path does not exist; otherwise a validated record.
+
+    Raises:
+        CalibrationStoreError: If an existing file cannot be loaded or validated.
+    """
+
     try:
         return load_calibration(path, board_address)
     except CalibrationStoreError as error:

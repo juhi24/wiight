@@ -11,6 +11,16 @@ Read [README.md](README.md) for user-facing installation information and [pyproj
 - Keep this file up to date when commands, architecture, dependencies, or project conventions change. Include instruction updates in the same change that makes existing guidance inaccurate.
 - Commit often with small, coherent changes after their relevant checks pass. Keep unrelated user changes out of those commits and use commit messages that describe the behavior or convention changed.
 
+## Docstrings
+
+- Follow PEP 257 and use concise Google-style docstrings throughout `src/wiight`.
+- Give every module, public class, exception, function, method, and property a summary. Use an imperative verb for functions and methods; describe what classes and exceptions represent.
+- Let type annotations describe data shapes. Add `Args`, `Returns`, `Yields`, and `Raises` sections only when they communicate behavior, units, constraints, side effects, lifecycle, or failures that are not obvious from the signature.
+- State units explicitly, especially centikilograms, kilograms, monotonic seconds, and wall-clock timestamps. Document ordering wherever four-corner readings cross an API boundary.
+- Document private helpers only when they own a non-obvious contract such as a shared deadline or resource lifecycle. Routine validation hooks, callbacks, and self-explanatory local helpers do not need docstrings.
+- Keep Click command docstrings short because Click displays them as command help. Do not duplicate option help in those docstrings.
+- Prefer Sphinx cross-references such as `:class:` and `:func:` when relating Python API objects, and use double backticks for literal values such as ``None``.
+
 ## Code boundaries
 
 - [src/wiight/measurement.py](src/wiight/measurement.py) owns hardware-independent calibration and stable-weight calculations.

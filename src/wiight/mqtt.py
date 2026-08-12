@@ -1,7 +1,9 @@
+"""Build MQTT messages and publish smart-scale state through paho-mqtt."""
+
 from __future__ import annotations
 
-import json
 import importlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from queue import Empty, Full, Queue
@@ -13,6 +15,8 @@ from wiight.measurement import StableMeasurement, centikilograms_to_kilograms
 
 @dataclass(frozen=True, slots=True)
 class PublishMessage:
+    """Describe an MQTT publication independently of a client library."""
+
     topic: str
     payload: str
     qos: int = 1
@@ -21,11 +25,19 @@ class PublishMessage:
 
 @dataclass(frozen=True, slots=True)
 class PairCommand:
-    pass
+    """Request pairing of the configured balance board."""
+
+
+@dataclass(frozen=True, slots=True)
+class TareCommand:
+    """Request tare of the configured balance board."""
+
+
+Command = PairCommand | TareCommand
 
 
 class MqttError(RuntimeError):
-    pass
+    """Raised when MQTT setup, publication, or shutdown fails."""
 
 
 def _default_client_factory(client_id: str):
@@ -39,6 +51,13 @@ def _default_client_factory(client_id: str):
 
 
 class MqttPublisher:
+    """Manage MQTT transport and a bounded queue of service commands.
+
+    The publisher installs a retained offline last will and subscribes to pairing
+    and tare command topics after connecting. Only non-retained messages whose
+    payload exactly matches their topic's command are queued.
+    """
+
     def __init__(
         self,
         config: MqttConfig,
@@ -53,7 +72,7 @@ class MqttPublisher:
         self._client = client_factory(config.client_id)
         self._started = False
         self._last_publish: Any | None = None
-        self._commands: Queue[PairCommand] = Queue(maxsize=1)
+        self._commands: Queue[Command] = Queue(maxsize=2)
         self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message
         offline = availability_message(config, False)
@@ -69,6 +88,12 @@ class MqttPublisher:
             self._client.tls_set()
 
     def start(self) -> None:
+        """Connect to the broker and start paho's network loop.
+
+        Raises:
+            MqttError: If already started or the broker connection fails.
+        """
+
         if self._started:
             raise MqttError("MQTT publisher is already started")
         try:
@@ -84,6 +109,12 @@ class MqttPublisher:
         self._started = True
 
     def publish(self, message: PublishMessage) -> None:
+        """Queue a message for publication and remember it for flushing.
+
+        Raises:
+            MqttError: If not started or paho rejects the publication.
+        """
+
         if not self._started:
             raise MqttError("MQTT publisher is not started")
         info = self._client.publish(
@@ -96,7 +127,9 @@ class MqttPublisher:
             raise MqttError(f"MQTT publish failed with result {info.rc}")
         self._last_publish = info
 
-    def get_command(self, timeout: float = 0.0) -> PairCommand | None:
+    def get_command(self, timeout: float = 0.0) -> Command | None:
+        """Return the next service command, or ``None`` after the timeout."""
+
         try:
             return self._commands.get(timeout=timeout)
         except Empty:
@@ -113,22 +146,33 @@ class MqttPublisher:
         if getattr(reason_code, "is_failure", False):
             return
         client.subscribe(pair_command_topic(self.config), qos=1)
+        client.subscribe(tare_command_topic(self.config), qos=1)
 
     def _on_message(self, client: Any, userdata: Any, message: Any) -> None:
-        if message.topic != pair_command_topic(self.config) or message.retain:
+        if message.retain:
             return
         try:
             payload = bytes(message.payload).decode("utf-8")
         except (UnicodeDecodeError, ValueError):
             return
-        if payload != "PAIR":
+        if message.topic == pair_command_topic(self.config) and payload == "PAIR":
+            command: Command = PairCommand()
+        elif message.topic == tare_command_topic(self.config) and payload == "TARE":
+            command = TareCommand()
+        else:
             return
         try:
-            self._commands.put_nowait(PairCommand())
+            self._commands.put_nowait(command)
         except Full:
             pass
 
     def flush(self, timeout: float = 5.0) -> None:
+        """Wait for the most recently queued publication to complete.
+
+        Raises:
+            MqttError: If paho cannot confirm publication before the timeout.
+        """
+
         if self._last_publish is None:
             return
         try:
@@ -137,6 +181,8 @@ class MqttPublisher:
             raise MqttError(f"MQTT publish did not flush: {error}") from error
 
     def stop(self, timeout: float = 5.0) -> None:
+        """Disconnect and stop the network loop if currently started."""
+
         if not self._started:
             return
         try:
@@ -148,6 +194,8 @@ class MqttPublisher:
 
 
 def availability_message(config: MqttConfig, online: bool) -> PublishMessage:
+    """Build a retained online or offline availability message."""
+
     return PublishMessage(
         topic=f"{config.base_topic}/availability",
         payload="online" if online else "offline",
@@ -156,14 +204,38 @@ def availability_message(config: MqttConfig, online: bool) -> PublishMessage:
 
 
 def pair_command_topic(config: MqttConfig) -> str:
+    """Return the command topic used to request board pairing."""
+
     return f"{config.base_topic}/pair/set"
+
+
+def tare_command_topic(config: MqttConfig) -> str:
+    """Return the command topic used to request tare."""
+
+    return f"{config.base_topic}/tare/set"
 
 
 def pairing_status_message(
     config: MqttConfig, *, state: str, error: str | None = None
 ) -> PublishMessage:
+    """Build a retained pairing-state message."""
+
     return PublishMessage(
         topic=f"{config.base_topic}/pair/status",
+        payload=json.dumps(
+            {"state": state, "error": error}, separators=(",", ":")
+        ),
+        retain=True,
+    )
+
+
+def tare_status_message(
+    config: MqttConfig, *, state: str, error: str | None = None
+) -> PublishMessage:
+    """Build a retained tare-state message."""
+
+    return PublishMessage(
+        topic=f"{config.base_topic}/tare/status",
         payload=json.dumps(
             {"state": state, "error": error}, separators=(",", ":")
         ),
@@ -179,6 +251,8 @@ def status_message(
     calibrated: bool,
     error: str | None = None,
 ) -> PublishMessage:
+    """Build a retained daemon and board status message."""
+
     payload = {
         "state": state,
         "board_connected": board_connected,
@@ -198,6 +272,12 @@ def weight_message(
     *,
     measured_at: datetime,
 ) -> PublishMessage:
+    """Build a non-retained stable-weight message in kilograms.
+
+    Raises:
+        ValueError: If ``measured_at`` does not include timezone information.
+    """
+
     if measured_at.tzinfo is None:
         raise ValueError("measured_at must include a timezone")
     payload = {
@@ -215,6 +295,8 @@ def weight_message(
 
 
 def discovery_message(config: MqttConfig, device_id: str) -> PublishMessage:
+    """Build retained Home Assistant discovery for weight and controls."""
+
     availability_topic = f"{config.base_topic}/availability"
     state_topic = f"{config.base_topic}/weight"
     payload: dict[str, Any] = {
@@ -245,6 +327,16 @@ def discovery_message(config: MqttConfig, device_id: str) -> PublishMessage:
                 "unique_id": f"{device_id}_pair",
                 "command_topic": pair_command_topic(config),
                 "payload_press": "PAIR",
+                "availability_topic": availability_topic,
+                "payload_available": "online",
+                "payload_not_available": "offline",
+            },
+            "tare": {
+                "platform": "button",
+                "name": "Tare",
+                "unique_id": f"{device_id}_tare",
+                "command_topic": tare_command_topic(config),
+                "payload_press": "TARE",
                 "availability_topic": availability_topic,
                 "payload_available": "online",
                 "payload_not_available": "offline",

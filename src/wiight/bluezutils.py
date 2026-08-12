@@ -1,3 +1,5 @@
+"""Query and control configured Bluetooth devices through BlueZ D-Bus APIs."""
+
 from __future__ import annotations
 
 import time
@@ -15,31 +17,31 @@ ManagedObjects = Mapping[str, Mapping[str, Mapping[str, Any]]]
 
 
 class BlueZLookupError(LookupError):
-    pass
+    """Base class for BlueZ lookup and control failures."""
 
 
 class AdapterNotFoundError(BlueZLookupError):
-    pass
+    """Raised when no Bluetooth adapter matches the requested pattern."""
 
 
 class DeviceNotFoundError(BlueZLookupError):
-    pass
+    """Raised when a Bluetooth address is absent on the selected adapter."""
 
 
 class DeviceNotConnectedError(BlueZLookupError):
-    pass
+    """Raised when the requested Bluetooth device is not connected."""
 
 
 class BlueZUnavailableError(BlueZLookupError):
-    pass
+    """Raised when BlueZ cannot be queried or controlled."""
 
 
 class BlueZPairingError(BlueZLookupError):
-    pass
+    """Raised when balance-board discovery or pairing fails."""
 
 
 class BlueZConnectionError(BlueZLookupError):
-    pass
+    """Raised when BlueZ cannot connect a requested device profile."""
 
 
 def _dbus_module():
@@ -53,6 +55,12 @@ def _system_bus():
 
 
 def get_managed_objects(bus=None) -> ManagedObjects:
+    """Return BlueZ's current object-manager snapshot.
+
+    Raises:
+        BlueZUnavailableError: If the system bus or BlueZ query fails.
+    """
+
     try:
         if bus is None:
             bus = _system_bus()
@@ -65,6 +73,14 @@ def get_managed_objects(bus=None) -> ManagedObjects:
 
 
 def find_adapter_path(objects: ManagedObjects, pattern: str | None = None) -> str:
+    """Find an adapter object path by address or path suffix.
+
+    With no pattern, the first adapter in the object snapshot is selected.
+
+    Raises:
+        AdapterNotFoundError: If no adapter matches.
+    """
+
     for path, interfaces in objects.items():
         adapter = interfaces.get(ADAPTER_INTERFACE)
         if adapter is None:
@@ -82,6 +98,13 @@ def find_device_path(
     device_address: str,
     adapter_pattern: str | None = None,
 ) -> str:
+    """Find a device path by address, optionally scoped to an adapter.
+
+    Raises:
+        AdapterNotFoundError: If the requested adapter does not exist.
+        DeviceNotFoundError: If the device is absent from that adapter.
+    """
+
     adapter_path = (
         find_adapter_path(objects, adapter_pattern) if adapter_pattern else None
     )
@@ -102,6 +125,12 @@ def find_connected_device_path(
     device_address: str,
     adapter_pattern: str | None = None,
 ) -> str:
+    """Find a device path and require its BlueZ ``Connected`` property.
+
+    Raises:
+        BlueZLookupError: If the adapter or device is absent or disconnected.
+    """
+
     path = find_device_path(objects, device_address, adapter_pattern)
     device = objects[path][DEVICE_INTERFACE]
     if not bool(device.get("Connected", False)):
@@ -112,6 +141,8 @@ def find_connected_device_path(
 
 
 def find_adapter(pattern: str | None = None, bus=None):
+    """Return the D-Bus interface for a matching Bluetooth adapter."""
+
     if bus is None:
         bus = _system_bus()
     return find_adapter_in_objects(get_managed_objects(bus), pattern, bus)
@@ -120,6 +151,8 @@ def find_adapter(pattern: str | None = None, bus=None):
 def find_adapter_in_objects(
     objects: ManagedObjects, pattern: str | None = None, bus=None
 ):
+    """Return an adapter interface using an existing object snapshot."""
+
     if bus is None:
         bus = _system_bus()
     path = find_adapter_path(objects, pattern)
@@ -130,6 +163,8 @@ def find_adapter_in_objects(
 def find_device(
     device_address: str, adapter_pattern: str | None = None, bus=None
 ):
+    """Return the D-Bus interface for a device address."""
+
     if bus is None:
         bus = _system_bus()
     return find_device_in_objects(
@@ -140,6 +175,12 @@ def find_device(
 def disconnect_device(
     device_address: str, adapter_pattern: str | None = None, bus=None
 ) -> None:
+    """Disconnect a device selected by address and optional adapter.
+
+    Raises:
+        BlueZLookupError: If lookup fails or BlueZ cannot disconnect the device.
+    """
+
     try:
         bus = bus or _system_bus()
         device = find_device_in_objects(
@@ -162,6 +203,13 @@ def connect_device_profile(
     timeout: float = 4.0,
     bus=None,
 ) -> None:
+    """Request a device profile connection within a timeout.
+
+    Raises:
+        ValueError: If ``timeout`` is not positive.
+        BlueZLookupError: If lookup fails or BlueZ rejects the connection.
+    """
+
     if timeout <= 0:
         raise ValueError("connection timeout must be positive")
     try:
@@ -184,6 +232,8 @@ def find_device_in_objects(
     adapter_pattern: str | None = None,
     bus=None,
 ):
+    """Return a device interface using an existing object snapshot."""
+
     if bus is None:
         bus = _system_bus()
     path = find_device_path(objects, device_address, adapter_pattern)
@@ -198,6 +248,20 @@ def pair_balance_board(
     timeout: float = 30.0,
     bus=None,
 ) -> str:
+    """Discover, pair, trust, and connect a configured balance board.
+
+    Discovery and D-Bus pairing operations share one monotonic deadline. BlueZ's
+    Wii autopair plugin, rather than an Agent1 implementation, supplies the binary
+    adapter-address PIN required by Nintendo devices.
+
+    Returns:
+        The paired device's BlueZ object path.
+
+    Raises:
+        ValueError: If ``timeout`` is not positive.
+        BlueZPairingError: If discovery, pairing, trust, or connection fails.
+    """
+
     if timeout <= 0:
         raise ValueError("pairing timeout must be positive")
     deadline = time.monotonic() + timeout
@@ -227,6 +291,8 @@ def _discover_device_path(
     adapter_path: str,
     deadline: float,
 ) -> str:
+    """Discover the configured device on one adapter before a deadline."""
+
     discovery_started = False
     try:
         try:
@@ -261,6 +327,8 @@ def _discover_device_path(
 
 
 def _pair_device(bus: Any, device_path: str, deadline: float) -> None:
+    """Pair, trust, and connect a discovered device before a deadline."""
+
     dbus = _dbus_module()
     device_object = bus.get_object(SERVICE_NAME, device_path)
     device = dbus.Interface(device_object, DEVICE_INTERFACE)
@@ -276,6 +344,8 @@ def _pair_device(bus: Any, device_path: str, deadline: float) -> None:
 
 
 def _remaining(deadline: float) -> float:
+    """Return positive seconds remaining before a pairing deadline."""
+
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise BlueZPairingError("balance board pairing timed out")

@@ -1,3 +1,5 @@
+"""Run blocking balance-board capture in a managed hardware thread."""
+
 from __future__ import annotations
 
 import time
@@ -22,28 +24,38 @@ from wiight.measurement import SensorSample
 
 @dataclass(frozen=True, slots=True)
 class WorkerStarted:
+    """Signal that capture opened a discovered board."""
+
     monotonic_time: float
     device_path: str
 
 
 @dataclass(frozen=True, slots=True)
 class WorkerStopped:
+    """Signal that the hardware thread has exited."""
+
     monotonic_time: float
 
 
 @dataclass(frozen=True, slots=True)
 class WorkerDisconnected:
+    """Signal an intentional disconnect while waiting for reconnection."""
+
     monotonic_time: float
 
 
 @dataclass(frozen=True, slots=True)
 class WorkerError:
+    """Report a recoverable or fatal hardware worker failure."""
+
     monotonic_time: float
     message: str
 
 
 @dataclass(frozen=True, slots=True)
 class WorkerSample:
+    """Carry a sensor sample with its corresponding wall-clock time."""
+
     wall_time: float
     sample: SensorSample
 
@@ -54,6 +66,13 @@ WorkerEvent = (
 
 
 class WorkerMailbox:
+    """Provide bounded, thread-safe delivery that prioritizes control events.
+
+    Samples are rejected when full. A control event may evict the oldest queued
+    sample so lifecycle information remains observable; control events themselves
+    are never discarded.
+    """
+
     def __init__(self, maxsize: int) -> None:
         if maxsize < 1:
             raise ValueError("mailbox maxsize must be positive")
@@ -62,6 +81,8 @@ class WorkerMailbox:
         self._condition = Condition()
 
     def put_sample(self, event: WorkerSample) -> bool:
+        """Enqueue a sample if capacity is available."""
+
         with self._condition:
             if len(self._events) >= self.maxsize:
                 return False
@@ -72,6 +93,12 @@ class WorkerMailbox:
     def put_control(
         self, event: WorkerStarted | WorkerDisconnected | WorkerStopped | WorkerError
     ) -> int:
+        """Enqueue a control event, evicting at most one sample if necessary.
+
+        Returns:
+            The number of samples evicted, either zero or one.
+        """
+
         dropped = 0
         with self._condition:
             if len(self._events) >= self.maxsize:
@@ -85,21 +112,33 @@ class WorkerMailbox:
         return dropped
 
     def get(self, timeout: float | None = None) -> WorkerEvent:
+        """Remove the oldest event, waiting up to ``timeout`` seconds.
+
+        Raises:
+            queue.Empty: If no event becomes available before the timeout.
+        """
+
         with self._condition:
             if not self._condition.wait_for(lambda: bool(self._events), timeout):
                 raise Empty
             return self._events.popleft()
 
     def get_nowait(self) -> WorkerEvent:
+        """Remove the oldest event without waiting."""
+
         return self.get(timeout=0)
 
     def qsize(self) -> int:
+        """Return the current number of queued events."""
+
         with self._condition:
             return len(self._events)
 
 
 @dataclass(frozen=True, slots=True)
 class WorkerConfig:
+    """Configure mailbox capacity, capture bounds, and reconnect timing."""
+
     queue_size: int = 256
     capture_duration: float = 3600.0
     idle_timeout: float = 2.0
@@ -114,6 +153,8 @@ class WorkerConfig:
 
 
 class HardwareWorker:
+    """Manage board discovery and event capture on a background thread."""
+
     def __init__(
         self,
         board: BoardConfig,
@@ -145,19 +186,33 @@ class HardwareWorker:
 
     @property
     def dropped_samples(self) -> int:
+        """Return the number of rejected or control-evicted samples."""
+
         return self._dropped_samples
 
     @property
     def is_alive(self) -> bool:
+        """Return whether the hardware thread is running."""
+
         return self._thread.is_alive()
 
     def start(self) -> None:
+        """Start the hardware thread."""
+
         self._thread.start()
 
     def disconnect(self) -> None:
+        """Request capture cancellation and a BlueZ disconnect."""
+
         self._disconnect_event.set()
 
     def stop(self, timeout: float = 5.0) -> None:
+        """Request shutdown and wait for the hardware thread.
+
+        Raises:
+            TimeoutError: If the thread remains alive after ``timeout`` seconds.
+        """
+
         self.stop_event.set()
         self._disconnect_event.set()
         if self._thread.ident is not None:
@@ -166,6 +221,12 @@ class HardwareWorker:
             raise TimeoutError("hardware worker did not stop within the deadline")
 
     def run_once(self) -> None:
+        """Discover a board and run one bounded capture session.
+
+        An explicit disconnect request closes capture, disconnects through BlueZ,
+        and emits :class:`WorkerDisconnected`. A global stop only closes capture.
+        """
+
         self._disconnect_event.clear()
         if self.stop_event.is_set():
             return
