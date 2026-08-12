@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -47,6 +48,9 @@ from wiight.worker import (
     WorkerStarted,
     WorkerStopped,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class Publisher(Protocol):
@@ -160,6 +164,9 @@ class DaemonEngine:
         self.calibration = calibration
         self.calibrated = True
         self.detector = self._create_detector(calibration)
+        logger.info(
+            "Activated tare calibration from %d samples", calibration.sample_count
+        )
         self._publish_status(board_connected=board_connected)
 
     def handle(self, event: WorkerEvent) -> bool:
@@ -172,6 +179,7 @@ class DaemonEngine:
 
         if isinstance(event, WorkerStarted):
             self.state = DaemonState.MEASURING
+            logger.info("Balance board connected at %s", event.device_path)
             self._publish_status(board_connected=True)
         elif isinstance(event, WorkerSample):
             measurement = self.detector.add(event.sample)
@@ -183,16 +191,23 @@ class DaemonEngine:
                         measured_at=datetime.fromtimestamp(event.wall_time, UTC),
                     )
                 )
+                logger.info(
+                    "Published stable measurement from %d samples",
+                    measurement.sample_count,
+                )
                 return True
         elif isinstance(event, WorkerDisconnected):
             self.detector.reset()
             self.state = DaemonState.WAITING_FOR_BOARD
+            logger.info("Balance board disconnected; waiting for reconnection")
             self._publish_status(board_connected=False)
         elif isinstance(event, WorkerError):
             self.state = DaemonState.DEGRADED
+            logger.warning("Hardware worker error: %s", event.message)
             self._publish_status(board_connected=False, error=event.message)
         elif isinstance(event, WorkerStopped):
             self.state = DaemonState.STOPPED
+            logger.info("Hardware worker stopped")
             self._publish_status(board_connected=False)
         return False
 
@@ -260,6 +275,7 @@ class DaemonService:
         try:
             self.publisher.start()
             publisher_started = True
+            logger.info("MQTT publisher started")
             self.publisher.publish(discovery_message(self.config.mqtt, identifier))
             self.publisher.publish(availability_message(self.config.mqtt, True))
             self.engine.publish_status(board_connected=False)
@@ -269,6 +285,7 @@ class DaemonService:
             self.publisher.publish(tare_status_message(self.config.mqtt, state="idle"))
             self.worker.start()
             worker_started = True
+            logger.info("Hardware worker started")
             while not stop_event.is_set():
                 command = self.publisher.get_command()
                 if isinstance(command, PairCommand):
@@ -282,6 +299,7 @@ class DaemonService:
                 if self._handle_event(event):
                     self.worker.disconnect()
         finally:
+            logger.info("Stopping daemon resources")
             try:
                 if worker_started:
                     self.worker.stop()
@@ -295,9 +313,11 @@ class DaemonService:
                         self.publisher.flush()
                     finally:
                         self.publisher.stop()
+            logger.info("Daemon resources stopped")
 
     def _pair_board(self) -> None:
         assert self.pairer is not None
+        logger.info("Pairing requested for board %s", self.config.board.address)
         self.publisher.publish(
             pairing_status_message(self.config.mqtt, state="pairing")
         )
@@ -308,12 +328,14 @@ class DaemonService:
                 timeout=30.0,
             )
         except bluezutils.BlueZPairingError as error:
+            logger.warning("Pairing failed: %s", error)
             self.publisher.publish(
                 pairing_status_message(
                     self.config.mqtt, state="failed", error=str(error)
                 )
             )
         else:
+            logger.info("Pairing completed for board %s", self.config.board.address)
             self.publisher.publish(
                 pairing_status_message(self.config.mqtt, state="paired")
             )
@@ -322,6 +344,10 @@ class DaemonService:
         """Begin collecting worker samples and publish the taring state."""
 
         self.tare_samples = []
+        logger.info(
+            "Tare requested; collecting %d samples",
+            self.config.calibration.minimum_samples,
+        )
         self.publisher.publish(tare_status_message(self.config.mqtt, state="taring"))
 
     def _handle_event(self, event: WorkerEvent) -> bool:
@@ -340,6 +366,7 @@ class DaemonService:
                 return False
             if isinstance(event, (WorkerDisconnected, WorkerError, WorkerStopped)):
                 self.tare_samples = None
+                logger.warning("Tare failed because the board disconnected")
                 self.publisher.publish(
                     tare_status_message(
                         self.config.mqtt,
@@ -375,6 +402,7 @@ class DaemonService:
                 calibration,
             )
         except (CalibrationError, CalibrationStoreError) as error:
+            logger.warning("Tare failed: %s", error)
             self.publisher.publish(
                 tare_status_message(
                     self.config.mqtt, state="failed", error=str(error)
@@ -389,6 +417,7 @@ class DaemonService:
             self.publisher.publish(
                 tare_status_message(self.config.mqtt, state="tared")
             )
+            logger.info("Tare completed and saved to %s", settings.path)
             return True
         finally:
             self.tare_samples = None

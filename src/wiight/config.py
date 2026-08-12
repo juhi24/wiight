@@ -134,13 +134,31 @@ class MqttConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class LoggingConfig:
+    """Configure daemon log verbosity."""
+
+    level: str = "INFO"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.level, str):
+            raise ConfigError("logging.level must be a string")
+        normalized = self.level.upper()
+        if normalized not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            raise ConfigError(
+                "logging.level must be DEBUG, INFO, WARNING, ERROR, or CRITICAL"
+            )
+        object.__setattr__(self, "level", normalized)
+
+
+@dataclass(frozen=True, slots=True)
 class ServiceConfig:
-    """Collect validated board, MQTT, measurement, and calibration settings."""
+    """Collect validated board, MQTT, measurement, calibration, and log settings."""
 
     board: BoardConfig
     mqtt: MqttConfig
     measurement: MeasurementSettings = field(default_factory=MeasurementSettings)
     calibration: CalibrationSettings = field(default_factory=CalibrationSettings)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
 def _table(data: dict[str, Any], name: str, allowed: set[str]) -> dict[str, Any]:
@@ -160,7 +178,13 @@ def parse_config(data: dict[str, Any]) -> ServiceConfig:
         ConfigError: If a table, option, required value, or value type is invalid.
     """
 
-    unknown_tables = set(data) - {"board", "measurement", "calibration", "mqtt"}
+    unknown_tables = set(data) - {
+        "board",
+        "measurement",
+        "calibration",
+        "mqtt",
+        "logging",
+    }
     if unknown_tables:
         raise ConfigError(f"unknown configuration table(s): {', '.join(sorted(unknown_tables))}")
 
@@ -185,6 +209,7 @@ def parse_config(data: dict[str, Any]) -> ServiceConfig:
         "mqtt",
         {"host", "port", "client_id", "base_topic", "discovery_prefix", "tls"},
     )
+    logging = _table(data, "logging", {"level"})
 
     try:
         return ServiceConfig(
@@ -198,6 +223,7 @@ def parse_config(data: dict[str, Any]) -> ServiceConfig:
                     else calibration
                 )
             ),
+            logging=LoggingConfig(**logging),
         )
     except TypeError as error:
         raise ConfigError(f"missing or invalid configuration value: {error}") from error

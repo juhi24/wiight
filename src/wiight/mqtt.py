@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from queue import Empty, Full, Queue
@@ -11,6 +12,9 @@ from typing import Any, Callable
 
 from wiight.config import MqttConfig
 from wiight.measurement import StableMeasurement, centikilograms_to_kilograms
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +101,11 @@ class MqttPublisher:
         if self._started:
             raise MqttError("MQTT publisher is already started")
         try:
+            logger.info(
+                "Connecting to MQTT broker %s:%d",
+                self.config.host,
+                self.config.port,
+            )
             self._client.connect(self.config.host, self.config.port)
             self._client.loop_start()
         except Exception as error:
@@ -126,6 +135,12 @@ class MqttPublisher:
         if getattr(info, "rc", 0) != 0:
             raise MqttError(f"MQTT publish failed with result {info.rc}")
         self._last_publish = info
+        logger.debug(
+            "Published MQTT message topic=%s qos=%d retain=%s",
+            message.topic,
+            message.qos,
+            message.retain,
+        )
 
     def get_command(self, timeout: float = 0.0) -> Command | None:
         """Return the next service command, or ``None`` after the timeout."""
@@ -144,7 +159,9 @@ class MqttPublisher:
         properties: Any,
     ) -> None:
         if getattr(reason_code, "is_failure", False):
+            logger.error("MQTT broker rejected connection: %s", reason_code)
             return
+        logger.info("Connected to MQTT broker")
         client.subscribe(pair_command_topic(self.config), qos=1)
         client.subscribe(tare_command_topic(self.config), qos=1)
 
@@ -164,7 +181,9 @@ class MqttPublisher:
         try:
             self._commands.put_nowait(command)
         except Full:
-            pass
+            logger.warning("Ignored MQTT command because the command queue is full")
+        else:
+            logger.info("Received MQTT %s command", payload.lower())
 
     def flush(self, timeout: float = 5.0) -> None:
         """Wait for the most recently queued publication to complete.
@@ -191,6 +210,7 @@ class MqttPublisher:
         finally:
             self._started = False
             self._last_publish = None
+            logger.info("MQTT publisher stopped")
 
 
 def availability_message(config: MqttConfig, online: bool) -> PublishMessage:

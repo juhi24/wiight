@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from threading import Event
 
@@ -62,7 +63,8 @@ def engine() -> tuple[DaemonEngine, RecordingPublisher]:
     )
 
 
-def test_daemon_tracks_worker_lifecycle() -> None:
+def test_daemon_tracks_worker_lifecycle(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="wiight.daemon")
     daemon, publisher = engine()
 
     daemon.handle(WorkerStarted(0, "/device"))
@@ -79,6 +81,13 @@ def test_daemon_tracks_worker_lifecycle() -> None:
 
     daemon.handle(WorkerStopped(2))
     assert daemon.state is DaemonState.STOPPED
+    assert "Balance board connected at /device" in caplog.messages
+    assert "Balance board disconnected; waiting for reconnection" in caplog.messages
+    assert "Hardware worker error: lost board" in caplog.messages
+    error_record = next(
+        record for record in caplog.records if "lost board" in record.message
+    )
+    assert error_record.levelno == logging.WARNING
 
 
 def test_daemon_publishes_only_stable_weight() -> None:

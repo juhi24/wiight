@@ -20,3 +20,6 @@ client_id = "wiight"
 base_topic = "wiight/scale"
 discovery_prefix = "homeassistant"
 tls = false
+
+[logging]
+level = "INFO"

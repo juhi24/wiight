@@ -372,9 +372,17 @@ def test_daemon_loads_config_calibration_and_environment_credentials(
     monkeypatch.setenv("WIIGHT_MQTT_PASSWORD", "secret")
     monkeypatch.setattr("wiight.mqtt.MqttPublisher", FakePublisher)
     monkeypatch.setattr("wiight.daemon.DaemonService", FakeService)
+    module = importlib.import_module("wiight.cli")
+    logging_levels = []
+    daemon_callback = module.main.commands["daemon"].callback
+    monkeypatch.setitem(
+        daemon_callback.__globals__,
+        "_configure_logging",
+        logging_levels.append,
+    )
 
     result = CliRunner().invoke(
-        importlib.import_module("wiight.cli").main,
+        module.main,
         ["daemon", "--config", str(config_path)],
     )
 
@@ -382,6 +390,7 @@ def test_daemon_loads_config_calibration_and_environment_credentials(
     assert ("publisher", "user", "secret") in calls
     assert ("service", "00:22:4C:60:0C:DB", 100) in calls
     assert ("run", False) in calls
+    assert logging_levels == ["INFO"]
 
 
 def test_daemon_starts_without_initial_calibration(

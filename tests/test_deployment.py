@@ -22,6 +22,9 @@ def test_systemd_unit_has_service_lifecycle_and_hardening() -> None:
     for directive in (
         "User=wiight",
         "ExecStart=/opt/wiight/venv/bin/wiight daemon",
+        "StandardOutput=journal",
+        "StandardError=journal",
+        "SyslogIdentifier=wiight",
         "Restart=on-failure",
         "TimeoutStopSec=40s",
         "StateDirectory=wiight",

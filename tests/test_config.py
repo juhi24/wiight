@@ -19,6 +19,7 @@ def test_parse_config_applies_defaults_and_normalizes_address() -> None:
     assert config.measurement.stable_duration_seconds == 2
     assert config.calibration.path == Path("/var/lib/wiight/calibration.json")
     assert config.mqtt.port == 1883
+    assert config.logging.level == "INFO"
 
 
 def test_load_config_reads_toml(tmp_path: Path) -> None:
@@ -39,6 +40,9 @@ path = "/tmp/calibration.json"
 [mqtt]
 host = "mqtt.local"
 tls = true
+
+[logging]
+level = "debug"
 """.strip(),
         encoding="utf-8",
     )
@@ -49,6 +53,7 @@ tls = true
     assert config.measurement.minimum_weight_centikilograms == 2000
     assert config.calibration.path == Path("/tmp/calibration.json")
     assert config.mqtt.tls is True
+    assert config.logging.level == "DEBUG"
 
 
 def test_parse_config_rejects_unknown_options() -> None:
@@ -76,6 +81,7 @@ def test_parse_config_rejects_invalid_cross_field_thresholds() -> None:
         ("board", "address", 123, "board.address must be a string"),
         ("mqtt", "port", "1883", "mqtt.port must be an integer"),
         ("mqtt", "tls", "false", "mqtt.tls must be a boolean"),
+        ("logging", "level", 10, "logging.level must be a string"),
         (
             "measurement",
             "stable_duration_seconds",
@@ -91,6 +97,14 @@ def test_parse_config_rejects_wrong_value_types(
     data.setdefault(section, {})[key] = value
 
     with pytest.raises(ConfigError, match=message):
+        parse_config(data)
+
+
+def test_parse_config_rejects_unknown_log_level() -> None:
+    data = valid_config()
+    data["logging"] = {"level": "verbose"}
+
+    with pytest.raises(ConfigError, match="logging.level must be DEBUG"):
         parse_config(data)
 
 

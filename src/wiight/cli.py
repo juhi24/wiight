@@ -3,12 +3,24 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import signal
 from pathlib import Path
 from threading import Event
 
 import click
+
+
+logger = logging.getLogger(__name__)
+
+
+def _configure_logging(level: str) -> None:
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]}, invoke_without_command=True)
@@ -318,6 +330,7 @@ def daemon(config_path: Path) -> None:
 
     try:
         config = load_config(config_path)
+        _configure_logging(config.logging.level)
         stored = load_optional_calibration(
             config.calibration.path, config.board.address
         )
@@ -334,9 +347,16 @@ def daemon(config_path: Path) -> None:
     except (ConfigError, CalibrationStoreError, MqttError) as error:
         raise click.ClickException(str(error)) from error
 
+    logger.info(
+        "Starting daemon for board %s with MQTT broker %s:%d",
+        config.board.address,
+        config.mqtt.host,
+        config.mqtt.port,
+    )
     stop_event = Event()
 
     def request_stop(signum, frame) -> None:
+        logger.info("Received %s; requesting shutdown", signal.Signals(signum).name)
         stop_event.set()
 
     previous_handlers = {
@@ -346,10 +366,12 @@ def daemon(config_path: Path) -> None:
     try:
         service.run(stop_event)
     except MqttError as error:
+        logger.error("MQTT service failure: %s", error)
         raise click.ClickException(str(error)) from error
     finally:
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
+        logger.info("Daemon stopped")
 
 
 if __name__ == "__main__":

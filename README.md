@@ -59,6 +59,9 @@ client_id = "wiight"
 base_topic = "wiight/scale"
 discovery_prefix = "homeassistant"
 tls = false
+
+[logging]
+level = "INFO"
 ```
 
 Validate configuration without accessing Bluetooth hardware:
@@ -162,6 +165,13 @@ The MQTT client configures a retained offline last will and flushes a graceful
 offline update before disconnecting. Corner samples are not published. Hardware
 access runs in a dedicated worker with bounded sample buffering, while stable
 measurement detection and publishing remain in the service thread.
+
+Daemon logs are written to standard error as `LEVEL logger: message`, which keeps
+foreground output readable and avoids duplicating timestamps already supplied by
+the systemd journal. Set `logging.level` to `DEBUG`, `INFO`, `WARNING`, `ERROR`,
+or `CRITICAL`; the default is `INFO`. Stable weights and raw corner readings are
+not included in INFO logs. DEBUG logging includes MQTT topic metadata but not
+payloads.
 
 After publishing a stable weight, the service closes the xwiimote interface and
 asks BlueZ to disconnect the board to conserve its batteries. The service stays
