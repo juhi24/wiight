@@ -14,7 +14,7 @@ authors = [
   { name = "Jussi Tiira", email = "jussi@j24.fi" },
 ]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 5 - Production/Stable",
   "Operating System :: POSIX :: Linux",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3.13",
