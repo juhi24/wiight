@@ -66,12 +66,23 @@ def test_discovery_is_retained_device_discovery() -> None:
     message = discovery_message(mqtt_config(), "wiight_bathroom")
     payload = json.loads(message.payload)
     component = payload["components"]["weight"]
+    connected = payload["components"]["connected"]
 
     assert message.topic == "homeassistant/device/wiight_bathroom/config"
     assert message.retain
     assert component["device_class"] == "weight"
     assert component["state_class"] == "measurement"
     assert component["unit_of_measurement"] == "kg"
+    assert connected["platform"] == "binary_sensor"
+    assert connected["name"] == "Connected"
+    assert connected["unique_id"] == "wiight_bathroom_connected"
+    assert connected["device_class"] == "connectivity"
+    assert connected["state_topic"] == "wiight/bathroom/status"
+    assert connected["value_template"] == (
+        "{{ 'ON' if value_json.board_connected else 'OFF' }}"
+    )
+    assert connected["payload_on"] == "ON"
+    assert connected["payload_off"] == "OFF"
     assert payload["components"]["pair"]["command_topic"] == (
         "wiight/bathroom/pair/set"
     )

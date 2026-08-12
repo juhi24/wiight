@@ -295,10 +295,11 @@ def weight_message(
 
 
 def discovery_message(config: MqttConfig, device_id: str) -> PublishMessage:
-    """Build retained Home Assistant discovery for weight and controls."""
+    """Build retained Home Assistant discovery for weight, status, and controls."""
 
     availability_topic = f"{config.base_topic}/availability"
     state_topic = f"{config.base_topic}/weight"
+    status_topic = f"{config.base_topic}/status"
     payload: dict[str, Any] = {
         "device": {
             "identifiers": [device_id],
@@ -317,6 +318,19 @@ def discovery_message(config: MqttConfig, device_id: str) -> PublishMessage:
                 "unit_of_measurement": "kg",
                 "state_topic": state_topic,
                 "value_template": "{{ value_json.weight_kg }}",
+                "availability_topic": availability_topic,
+                "payload_available": "online",
+                "payload_not_available": "offline",
+            },
+            "connected": {
+                "platform": "binary_sensor",
+                "name": "Connected",
+                "unique_id": f"{device_id}_connected",
+                "device_class": "connectivity",
+                "state_topic": status_topic,
+                "value_template": "{{ 'ON' if value_json.board_connected else 'OFF' }}",
+                "payload_on": "ON",
+                "payload_off": "OFF",
                 "availability_topic": availability_topic,
                 "payload_available": "online",
                 "payload_not_available": "offline",
