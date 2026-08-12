@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import AbstractContextManager
 from threading import Event
 
@@ -186,6 +187,36 @@ def test_worker_retries_transient_hardware_error_and_stops() -> None:
     assert attempts == 1
     assert isinstance(worker.events.get_nowait(), WorkerError)
     assert isinstance(worker.events.get_nowait(), WorkerStopped)
+
+
+def test_worker_quietly_retries_initially_disconnected_board(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="wiight.worker")
+    stop_event = Event()
+    attempts = 0
+
+    def discover(address: str, adapter: str | None) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            stop_event.set()
+        raise BalanceBoardNotFoundError("board is not connected")
+
+    worker = HardwareWorker(
+        BoardConfig("00:22:4C:60:0C:DB"),
+        config=WorkerConfig(retry_delay=0.001),
+        stop_event=stop_event,
+        discover=discover,
+    )
+
+    worker._run()
+
+    assert attempts == 2
+    assert isinstance(worker.events.get_nowait(), WorkerStopped)
+    assert worker.events.qsize() == 0
+    assert caplog.messages == [
+        "Balance board is not connected; waiting for connection: "
+        "board is not connected"
+    ]
 
 
 def test_worker_stop_before_start_is_safe() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import deque
 from collections.abc import Callable
@@ -20,6 +21,9 @@ from wiight.hardware import (
     find_configured_balance_board_path,
 )
 from wiight.measurement import SensorSample
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +186,7 @@ class HardwareWorker:
         self._thread = Thread(target=self._run, name="wiight-hardware", daemon=True)
         self._disconnect_event = Event()
         self._waiting_for_reconnect = False
+        self._unavailable_reported = False
         self._dropped_samples = 0
 
     @property
@@ -232,6 +237,7 @@ class HardwareWorker:
             return
         device_path = self._discover(self.board.address, self.board.adapter)
         self._waiting_for_reconnect = False
+        self._unavailable_reported = False
         self._put_control(WorkerStarted(time.monotonic(), device_path))
         with self._reader_factory(device_path) as reader:
             for event in reader.capture_events(
@@ -257,8 +263,15 @@ class HardwareWorker:
                     ):
                         break
                 except BalanceBoardNotFoundError as error:
-                    if not self._waiting_for_reconnect:
-                        self._put_control(WorkerError(time.monotonic(), str(error)))
+                    if (
+                        not self._waiting_for_reconnect
+                        and not self._unavailable_reported
+                    ):
+                        logger.info(
+                            "Balance board is not connected; waiting for connection: %s",
+                            error,
+                        )
+                        self._unavailable_reported = True
                     if self.stop_event.wait(self.config.retry_delay):
                         break
                 except BalanceBoardError as error:
